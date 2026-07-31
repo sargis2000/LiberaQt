@@ -1,0 +1,121 @@
+"""Exception hierarchy for qtdriver.
+
+Every error carries enough context to debug a failing test without re-running it:
+the selector, the resolved handle (if any), and a one-line remediation hint.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+
+class QtDriverError(Exception):
+    """Base class for everything this package raises."""
+
+    hint: str = ""
+
+    def __init__(self, message: str, *, hint: str = "", data: Optional[dict] = None):
+        self.data = data or {}
+        if hint:
+            self.hint = hint
+        full = message
+        if self.hint:
+            full = f"{message}\n  hint: {self.hint}"
+        super().__init__(full)
+
+
+class LaunchError(QtDriverError):
+    """The AUT started but the agent never connected."""
+
+    hint = (
+        "Run with QT_DEBUG_PLUGINS=1 to see whether Qt found the qtdriver plugin, "
+        "and check `qtdriver doctor` for an agent/Qt ABI mismatch."
+    )
+
+
+class AgentMismatchError(QtDriverError):
+    """No prebuilt agent matches the AUT's Qt build."""
+
+
+class ConnectionLostError(QtDriverError):
+    """The socket dropped mid-run, usually because the AUT crashed."""
+
+
+class ProtocolError(QtDriverError):
+    """The agent said something we do not understand."""
+
+
+class SelectorError(QtDriverError):
+    """Base for selector resolution problems."""
+
+
+class InvalidSelectorError(SelectorError):
+    """The selector string could not be parsed."""
+
+
+class ObjectNotFoundError(SelectorError):
+    hint = "Check `qtdriver inspect` for the live object tree; near-misses are listed below."
+
+    def __init__(self, selector: Any, near_misses: Optional[list] = None, **kw: Any):
+        msg = f"no object matched selector: {selector}"
+        if near_misses:
+            lines = "\n".join(f"    - {m}" for m in near_misses[:5])
+            msg += f"\n  near misses:\n{lines}"
+        super().__init__(msg, **kw)
+        self.selector = selector
+        self.near_misses = near_misses or []
+
+
+class AmbiguousSelectorError(SelectorError):
+    hint = "Narrow it with .filter(...), or pick one explicitly with .first / .nth(i)."
+
+    def __init__(self, selector: Any, matches: Optional[list] = None, **kw: Any):
+        n = len(matches or [])
+        msg = f"selector matched {n} objects, expected exactly 1: {selector}"
+        if matches:
+            lines = "\n".join(f"    - {m}" for m in matches[:8])
+            msg += f"\n  matches:\n{lines}"
+        super().__init__(msg, **kw)
+        self.selector = selector
+        self.matches = matches or []
+
+
+class StaleObjectError(SelectorError):
+    hint = "The object was destroyed. Re-resolve the locator instead of caching handles."
+
+
+class NotActionableError(QtDriverError):
+    hint = "Wait for the precondition explicitly, or check whether a modal dialog is covering it."
+
+
+class TimeoutError(QtDriverError):  # noqa: A001 - intentionally shadows builtin within package
+    """A wait or an agent command exceeded its deadline."""
+
+
+class UnsupportedOperationError(QtDriverError):
+    """Valid request, wrong object type or Qt version."""
+
+
+ERROR_CODE_MAP = {
+    "not_found": ObjectNotFoundError,
+    "ambiguous": AmbiguousSelectorError,
+    "stale": StaleObjectError,
+    "not_actionable": NotActionableError,
+    "unsupported": UnsupportedOperationError,
+    "invalid_params": ProtocolError,
+    "internal": QtDriverError,
+    "timeout": TimeoutError,
+}
+
+
+def from_agent_error(payload: dict, selector: Any = None) -> QtDriverError:
+    """Translate a protocol error object into a Python exception."""
+    code = payload.get("code", "internal")
+    message = payload.get("message", "agent error")
+    data = payload.get("data", {}) or {}
+    cls = ERROR_CODE_MAP.get(code, QtDriverError)
+    if cls is ObjectNotFoundError:
+        return ObjectNotFoundError(selector or data.get("context"), data.get("near_misses"), data=data)
+    if cls is AmbiguousSelectorError:
+        return AmbiguousSelectorError(selector or data.get("context"), data.get("matches"), data=data)
+    return cls(f"[{code}] {message}", data=data)

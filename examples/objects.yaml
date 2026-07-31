@@ -1,0 +1,13 @@
+# Object map: symbolic names -> selectors.
+#
+# Keeping selectors here rather than inline means a UI change is a one-line fix instead of a
+# sweep through the whole suite. `qtdriver inspect --validate` checks every entry still resolves.
+
+login:
+  username: "QLineEdit#usernameField"
+  password: "QLineEdit#passwordField"
+  submit:   "QPushButton#submitButton"
+  status:   "QLabel#statusLabel"
+
+orders:
+  table: "QTableView#ordersTable"

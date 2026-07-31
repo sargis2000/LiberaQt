@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  client:
+    name: Python client (no Qt needed)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest tests/ -q
+
+  agent:
+    name: Agent + integration (Qt ${{ matrix.qt }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04,  qt: "6.7.2",  tag: "qt6.7-linux-x86_64-gcc" }
+          - { os: ubuntu-22.04,  qt: "5.15.2", tag: "qt5.15-linux-x86_64-gcc" }
+          - { os: windows-2022,  qt: "6.7.2",  tag: "qt6.7-windows-x86_64-msvc2022" }
+          - { os: windows-2022,  qt: "5.15.2", tag: "qt5.15-windows-x86_64-msvc2019" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ matrix.qt }}
+          modules: ${{ startsWith(matrix.qt, '6') && 'qtdeclarative' || '' }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -e ".[dev]"
+
+      - name: Build agent
+        run: |
+          cmake -S agent -B build/agent -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/agent --config Release --parallel
+          cmake --install build/agent --prefix ${{ github.workspace }}/agents/${{ matrix.tag }}
+
+      - name: Build sample apps
+        run: |
+          cmake -S examples/sample_app -B build/sample -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/sample --config Release --parallel
+
+      - name: Integration tests (Linux, offscreen)
+        if: runner.os == 'Linux'
+        env:
+          QTDRIVER_AGENT_PATH: ${{ github.workspace }}/agents
+        run: |
+          xvfb-run -a pytest examples/tests/ -q \
+            --qtdriver-exe build/sample/sample_widgets \
+            --qtdriver-qt ${{ matrix.qt }}
+
+      - name: Integration tests (Windows)
+        if: runner.os == 'Windows'
+        env:
+          QTDRIVER_AGENT_PATH: ${{ github.workspace }}/agents
+        run: |
+          pytest examples/tests/ -q --qtdriver-exe build/sample/Release/sample_widgets.exe --qtdriver-qt ${{ matrix.qt }}
+
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qtdriver-trace-${{ matrix.tag }}
+          path: qtdriver-trace/
+
+      - name: Upload agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.tag }}
+          path: agents/${{ matrix.tag }}

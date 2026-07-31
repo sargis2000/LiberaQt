@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "qt6.7-linux",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../build/agent-qt6.7-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "$env{QT6_DIR}"
+      }
+    },
+    {
+      "name": "qt5.15-linux",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../build/agent-qt5.15-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "$env{QT5_DIR}"
+      }
+    },
+    {
+      "name": "qt6.7-windows",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../build/agent-qt6.7-windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "$env{QT6_DIR}"
+      }
+    }
+  ]
+}

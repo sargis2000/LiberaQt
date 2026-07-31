@@ -1,0 +1,198 @@
+#include "dispatcher.h"
+
+#include "input_synth.h"
+#include "object_registry.h"
+#include "screenshot.h"
+#include "selector_engine.h"
+#include "value_codec.h"
+#include "widget_backend.h"
+
+#include <cstdlib>
+
+#include <QCoreApplication>
+#include <QVariantList>
+
+namespace qtdriver {
+
+namespace ErrorCode {
+const char *NotFound = "not_found";
+const char *Ambiguous = "ambiguous";
+const char *Stale = "stale";
+const char *NotActionable = "not_actionable";
+const char *Unsupported = "unsupported";
+const char *InvalidParams = "invalid_params";
+const char *Internal = "internal";
+const char *Timeout = "timeout";
+}
+
+Dispatcher::Dispatcher(ObjectRegistry &registry)
+    : m_registry(registry)
+{
+    registerBuiltins();
+}
+
+void Dispatcher::registerCommand(const QString &name, Handler handler)
+{
+    m_handlers.insert(name, std::move(handler));
+}
+
+QVariantMap Dispatcher::handle(const QVariantMap &request)
+{
+    QVariantMap response;
+    response.insert(QStringLiteral("id"), request.value(QStringLiteral("id")));
+
+    const QString cmd = request.value(QStringLiteral("cmd")).toString();
+    const auto it = m_handlers.constFind(cmd);
+    if (it == m_handlers.constEnd()) {
+        QVariantMap error;
+        error.insert(QStringLiteral("code"), QString::fromLatin1(ErrorCode::Unsupported));
+        error.insert(QStringLiteral("message"), QStringLiteral("unknown command: %1").arg(cmd));
+        response.insert(QStringLiteral("ok"), false);
+        response.insert(QStringLiteral("error"), error);
+        return response;
+    }
+
+    // A handler must never let an exception escape into the Qt event loop.
+    try {
+        const QVariant result = (*it)(request.value(QStringLiteral("params")).toMap());
+        response.insert(QStringLiteral("ok"), true);
+        response.insert(QStringLiteral("result"), result);
+    } catch (const CommandError &err) {
+        QVariantMap error;
+        error.insert(QStringLiteral("code"), err.code);
+        error.insert(QStringLiteral("message"), err.message);
+        error.insert(QStringLiteral("data"), err.data);
+        response.insert(QStringLiteral("ok"), false);
+        response.insert(QStringLiteral("error"), error);
+    } catch (const std::exception &err) {
+        QVariantMap error;
+        error.insert(QStringLiteral("code"), QString::fromLatin1(ErrorCode::Internal));
+        error.insert(QStringLiteral("message"), QString::fromUtf8(err.what()));
+        response.insert(QStringLiteral("ok"), false);
+        response.insert(QStringLiteral("error"), error);
+    }
+    return response;
+}
+
+void Dispatcher::registerBuiltins()
+{
+    // ---- session ---------------------------------------------------------
+    registerCommand(QStringLiteral("session.ping"), [](const QVariantMap &) -> QVariant {
+        QVariantMap out;
+        out.insert(QStringLiteral("pong"), true);
+        return out;
+    });
+
+    registerCommand(QStringLiteral("session.info"), [](const QVariantMap &) -> QVariant {
+        QVariantMap out;
+        out.insert(QStringLiteral("qt"), QString::fromUtf8(qVersion()));
+        out.insert(QStringLiteral("pid"), QCoreApplication::applicationPid());
+        out.insert(QStringLiteral("app"), QCoreApplication::applicationName());
+        return out;
+    });
+
+    registerCommand(QStringLiteral("session.quit"), [](const QVariantMap &params) -> QVariant {
+        const bool force = params.value(QStringLiteral("force")).toBool();
+        if (force)
+            std::_Exit(0);
+        QCoreApplication::quit();
+        return QVariantMap{};
+    });
+
+    // ---- discovery -------------------------------------------------------
+    registerCommand(QStringLiteral("window.list"), [this](const QVariantMap &) -> QVariant {
+        return WidgetBackend::listWindows(m_registry);
+    });
+
+    registerCommand(QStringLiteral("object.find"), [this](const QVariantMap &params) -> QVariant {
+        const Selector selector = Selector::fromJson(
+            params.value(QStringLiteral("selector")).toMap());
+        QObject *root = m_registry.resolveOrNull(
+            params.value(QStringLiteral("root")).toString());
+
+        SelectorEngine engine(m_registry);
+        const auto matches = engine.find(selector, root,
+                                         params.value(QStringLiteral("limit")).toInt());
+
+        QVariantList handles;
+        for (QObject *o : matches)
+            handles.append(m_registry.handleFor(o));
+
+        QVariantMap out;
+        out.insert(QStringLiteral("handles"), handles);
+        if (handles.isEmpty()) {
+            // Near misses are what turn "not found" from a dead end into a diagnosis.
+            out.insert(QStringLiteral("near_misses"), engine.nearMisses(selector, root, 5));
+        }
+        return out;
+    });
+
+    registerCommand(QStringLiteral("object.info"), [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QVariantMap info = WidgetBackend::describe(object, m_registry);
+        if (params.value(QStringLiteral("require_actionable")).toBool()) {
+            const QString why = WidgetBackend::actionabilityProblem(object);
+            if (!why.isEmpty())
+                throw CommandError(ErrorCode::NotActionable, why, info);
+        }
+        return info;
+    });
+
+    registerCommand(QStringLiteral("object.tree"), [this](const QVariantMap &params) -> QVariant {
+        QObject *root = m_registry.resolveOrNull(params.value(QStringLiteral("root")).toString());
+        return WidgetBackend::dumpTree(root, m_registry,
+                                       params.value(QStringLiteral("depth"), -1).toInt(),
+                                       params.value(QStringLiteral("visual_only"), true).toBool());
+    });
+
+    // ---- properties ------------------------------------------------------
+    registerCommand(QStringLiteral("object.get_property"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString name = params.value(QStringLiteral("name")).toString();
+        QVariantMap out;
+        out.insert(QStringLiteral("value"),
+                   ValueCodec::encode(object->property(name.toUtf8().constData())));
+        return out;
+    });
+
+    registerCommand(QStringLiteral("object.set_property"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString name = params.value(QStringLiteral("name")).toString();
+        const bool ok = object->setProperty(name.toUtf8().constData(),
+                                            ValueCodec::decode(params.value(QStringLiteral("value"))));
+        if (!ok)
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("no writable property '%1' on %2")
+                                   .arg(name, QString::fromUtf8(object->metaObject()->className())));
+        return QVariantMap{};
+    });
+
+    // TODO(m1): object.list_properties, object.invoke, quick.*, widget.*, sync.*, record.*
+    // Each new command needs: PROTOCOL.md entry, handler here, Python method, and a test.
+
+    // ---- input -----------------------------------------------------------
+    registerCommand(QStringLiteral("input.click"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::click(m_registry, params);
+    });
+    registerCommand(QStringLiteral("input.hover"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::hover(m_registry, params);
+    });
+    registerCommand(QStringLiteral("input.key"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::key(m_registry, params);
+    });
+    registerCommand(QStringLiteral("input.type_text"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::typeText(m_registry, params);
+    });
+    registerCommand(QStringLiteral("input.set_text"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::setText(m_registry, params);
+    });
+
+    // ---- visual ----------------------------------------------------------
+    registerCommand(QStringLiteral("screen.grab"), [this](const QVariantMap &params) -> QVariant {
+        return Screenshot::grab(m_registry, params);
+    });
+}
+
+} // namespace qtdriver

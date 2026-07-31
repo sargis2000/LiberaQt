@@ -1,0 +1,6 @@
+[qtdriver]
+executable = "build/sample/sample_widgets"
+qt = "6.7"
+object_map = "examples/objects.yaml"
+timeout = 5.0
+headless = true
