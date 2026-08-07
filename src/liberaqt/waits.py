@@ -42,7 +42,9 @@ def retry(
 ) -> T:
     """Call ``fn`` until it returns without raising a retryable error.
 
-    Always attempts at least once, so a zero timeout still does useful work.
+    Always attempts at least once, so a zero timeout still does useful work. Errors that mark
+    themselves ``retryable = False`` are re-raised immediately: polling cannot make an
+    unimplemented command exist, and swallowing the cause into a TimeoutError would hide it.
     """
     deadline = time.monotonic() + timeout
     last: BaseException | None = None
@@ -52,6 +54,8 @@ def retry(
         try:
             return fn()
         except retry_on as exc:
+            if not getattr(exc, "retryable", True):
+                raise
             last = exc
             if time.monotonic() >= deadline:
                 break

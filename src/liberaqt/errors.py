@@ -14,6 +14,15 @@ class LiberaQtError(Exception):
 
     hint: str = ""
 
+    #: Whether the auto-wait loop should keep trying after this error.
+    #:
+    #: Most failures are transient by nature -- the object has not been created yet, the button
+    #: is still disabled -- and retrying is the whole point of the waiting model. A few are
+    #: permanent: no amount of polling makes an unimplemented command exist or an unparseable
+    #: selector parse. Retrying those burns the caller's entire timeout and then reports a
+    #: TimeoutError, hiding the real cause.
+    retryable: bool = True
+
     def __init__(self, message: str, *, hint: str = "", data: dict | None = None):
         self.data = data or {}
         if hint:
@@ -31,18 +40,26 @@ class LaunchError(LiberaQtError):
         "Run with QT_DEBUG_PLUGINS=1 to see whether Qt found the liberaqt plugin, "
         "and check `liberaqt doctor` for an agent/Qt ABI mismatch."
     )
+    # The process is already up or already dead; polling changes nothing.
+    retryable = False
 
 
 class AgentMismatchError(LiberaQtError):
     """No prebuilt agent matches the AUT's Qt build."""
 
+    retryable = False
+
 
 class ConnectionLostError(LiberaQtError):
     """The socket dropped mid-run, usually because the AUT crashed."""
 
+    retryable = False
+
 
 class ProtocolError(LiberaQtError):
     """The agent said something we do not understand."""
+
+    retryable = False
 
 
 class SelectorError(LiberaQtError):
@@ -51,6 +68,8 @@ class SelectorError(LiberaQtError):
 
 class InvalidSelectorError(SelectorError):
     """The selector string could not be parsed."""
+
+    retryable = False
 
 
 class ObjectNotFoundError(SelectorError):
@@ -98,6 +117,8 @@ class TimeoutError(LiberaQtError):  # noqa: A001 - intentionally shadows builtin
 
 class UnsupportedOperationError(LiberaQtError):
     """Valid request, wrong object type or Qt version."""
+
+    retryable = False
 
 
 ERROR_CODE_MAP = {
