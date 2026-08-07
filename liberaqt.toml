@@ -1,0 +1,5 @@
+# Repo-level liberaqt config, picked up by the pytest plugin (rootdir/liberaqt.toml).
+# The executable is passed on the command line (--liberaqt-exe) so this file stays
+# platform-neutral; see examples/liberaqt.toml for a full user-facing example.
+[liberaqt]
+object_map = "examples/objects.yaml"

@@ -2,7 +2,7 @@
 
 #include <QVariant>
 
-namespace qtdriver {
+namespace liberaqt {
 
 // QVariant <-> JSON. Lossy conversions are made explicit with tagged objects rather than silently
 // stringified, so a test never compares against a value that quietly changed shape on the wire.
@@ -14,4 +14,4 @@ public:
     static QVariant decode(const QVariant &json);    // JSON-safe QVariant -> QVariant
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

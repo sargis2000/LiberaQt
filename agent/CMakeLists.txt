@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(qtdriver_agent LANGUAGES CXX VERSION 0.1.0)
+project(liberaqt_agent LANGUAGES CXX VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,15 +14,15 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Widgets Network)
 
 # Qt Quick support is optional at build time: an agent built without it still drives widget apps.
 find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS Quick Qml QuickTest)
-set(QTDRIVER_HAVE_QUICK ${Qt${QT_VERSION_MAJOR}Quick_FOUND})
+set(LIBERAQT_HAVE_QUICK ${Qt${QT_VERSION_MAJOR}Quick_FOUND})
 
-message(STATUS "qtdriver agent: Qt ${QT_VERSION} (${CMAKE_CXX_COMPILER_ID}), quick=${QTDRIVER_HAVE_QUICK}")
+message(STATUS "liberaqt agent: Qt ${QT_VERSION} (${CMAKE_CXX_COMPILER_ID}), quick=${LIBERAQT_HAVE_QUICK}")
 
 if(QT_VERSION VERSION_LESS 5.15)
-  message(FATAL_ERROR "qtdriver requires Qt 5.15 or newer")
+  message(FATAL_ERROR "liberaqt requires Qt 5.15 or newer")
 endif()
 
-set(QTDRIVER_SOURCES
+set(LIBERAQT_SOURCES
   src/agent_plugin.cpp
   src/agent.cpp
   src/server.cpp
@@ -37,14 +37,14 @@ set(QTDRIVER_SOURCES
   src/value_codec.cpp
 )
 
-if(QTDRIVER_HAVE_QUICK)
-  list(APPEND QTDRIVER_SOURCES src/quick_backend.cpp)
+if(LIBERAQT_HAVE_QUICK)
+  list(APPEND LIBERAQT_SOURCES src/quick_backend.cpp)
 endif()
 
-add_library(qtdriver MODULE ${QTDRIVER_SOURCES})
+add_library(liberaqt MODULE ${LIBERAQT_SOURCES})
 
-target_include_directories(qtdriver PRIVATE src)
-target_link_libraries(qtdriver PRIVATE
+target_include_directories(liberaqt PRIVATE src)
+target_link_libraries(liberaqt PRIVATE
   Qt${QT_VERSION_MAJOR}::Core
   Qt${QT_VERSION_MAJOR}::Gui
   Qt${QT_VERSION_MAJOR}::Widgets
@@ -53,39 +53,39 @@ target_link_libraries(qtdriver PRIVATE
 
 # Private headers give access to QWindowSystemInterface, which is how we deliver input events that
 # behave like real ones. It is a private API: guarded, version-checked, and isolated in compat.h.
-target_link_libraries(qtdriver PRIVATE Qt${QT_VERSION_MAJOR}::GuiPrivate)
+target_link_libraries(liberaqt PRIVATE Qt${QT_VERSION_MAJOR}::GuiPrivate)
 
-if(QTDRIVER_HAVE_QUICK)
-  target_link_libraries(qtdriver PRIVATE Qt${QT_VERSION_MAJOR}::Quick Qt${QT_VERSION_MAJOR}::Qml)
-  target_compile_definitions(qtdriver PRIVATE QTDRIVER_HAVE_QUICK=1)
+if(LIBERAQT_HAVE_QUICK)
+  target_link_libraries(liberaqt PRIVATE Qt${QT_VERSION_MAJOR}::Quick Qt${QT_VERSION_MAJOR}::Qml)
+  target_compile_definitions(liberaqt PRIVATE LIBERAQT_HAVE_QUICK=1)
 endif()
 
-target_compile_definitions(qtdriver PRIVATE
-  QTDRIVER_VERSION="${PROJECT_VERSION}"
-  QTDRIVER_PROTOCOL=1
+target_compile_definitions(liberaqt PRIVATE
+  LIBERAQT_VERSION="${PROJECT_VERSION}"
+  LIBERAQT_PROTOCOL=1
   QT_NO_CAST_FROM_ASCII
 )
 
 if(MSVC)
-  target_compile_options(qtdriver PRIVATE /W4 /permissive-)
+  target_compile_options(liberaqt PRIVATE /W4 /permissive-)
 else()
-  target_compile_options(qtdriver PRIVATE -Wall -Wextra -Wpedantic -fvisibility=hidden)
+  target_compile_options(liberaqt PRIVATE -Wall -Wextra -Wpedantic -fvisibility=hidden)
 endif()
 
 # Qt looks for generic plugins in <QT_PLUGIN_PATH>/generic/
-set_target_properties(qtdriver PROPERTIES
+set_target_properties(liberaqt PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/generic"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/generic"
 )
 if(WIN32)
-  # No "lib" prefix on Windows; Qt looks for generic/qtdriver.dll.
-  set_target_properties(qtdriver PROPERTIES PREFIX "")
+  # No "lib" prefix on Windows; Qt looks for generic/liberaqt.dll.
+  set_target_properties(liberaqt PROPERTIES PREFIX "")
 endif()
 
-install(TARGETS qtdriver
+install(TARGETS liberaqt
   LIBRARY DESTINATION plugins/generic
   RUNTIME DESTINATION plugins/generic
 )
 
 # Optional: the header-only embed shim for apps that link the agent themselves.
-install(FILES src/embed.h DESTINATION include/qtdriver)
+install(FILES src/embed.h DESTINATION include/liberaqt)

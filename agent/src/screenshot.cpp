@@ -9,7 +9,7 @@
 #include <QWidget>
 #include <QWindow>
 
-namespace qtdriver {
+namespace liberaqt {
 
 QVariantMap Screenshot::grab(ObjectRegistry &registry, const QVariantMap &params)
 {
@@ -41,4 +41,4 @@ QVariantMap Screenshot::grab(ObjectRegistry &registry, const QVariantMap &params
     return out;
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

@@ -12,7 +12,7 @@
 #include <QWidget>
 #include <QWindow>
 
-namespace qtdriver {
+namespace liberaqt {
 
 namespace {
 
@@ -184,4 +184,4 @@ QVariantMap InputSynth::setText(ObjectRegistry &registry, const QVariantMap &par
                            .arg(QString::fromUtf8(object->metaObject()->className())));
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

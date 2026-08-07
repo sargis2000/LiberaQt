@@ -4,7 +4,7 @@
 #include <QObject>
 #include <memory>
 
-namespace qtdriver {
+namespace liberaqt {
 
 class Server;
 class Dispatcher;
@@ -45,4 +45,4 @@ private:
     bool m_started = false;
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

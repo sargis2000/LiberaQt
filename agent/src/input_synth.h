@@ -2,7 +2,7 @@
 
 #include <QVariantMap>
 
-namespace qtdriver {
+namespace liberaqt {
 
 class ObjectRegistry;
 
@@ -26,4 +26,4 @@ public:
     // TODO(m1): press/release, wheel, drag, IME composition
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

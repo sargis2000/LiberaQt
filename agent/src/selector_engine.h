@@ -8,7 +8,7 @@
 
 class QObject;
 
-namespace qtdriver {
+namespace liberaqt {
 
 class ObjectRegistry;
 
@@ -71,4 +71,4 @@ private:
     ObjectRegistry &m_registry;
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

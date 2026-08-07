@@ -105,7 +105,7 @@ private:
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("qtdriver-sample-widgets"));
+    app.setApplicationName(QStringLiteral("liberaqt-sample-widgets"));
     LoginWindow window;
     window.resize(480, 400);
     window.show();

@@ -2,7 +2,7 @@
 
 #include "dispatcher.h"
 
-namespace qtdriver {
+namespace liberaqt {
 
 ObjectRegistry::ObjectRegistry() = default;
 
@@ -54,4 +54,4 @@ void ObjectRegistry::forget(QObject *object)
         m_byHandle.remove(handle);
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

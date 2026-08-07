@@ -2,7 +2,7 @@
 
 #include <QObject>
 
-namespace qtdriver {
+namespace liberaqt {
 
 // "Is the UI settled?" -- the single most important heuristic in a GUI automation tool.
 //
@@ -32,4 +32,4 @@ private:
     bool m_installed = false;
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

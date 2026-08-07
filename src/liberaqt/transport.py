@@ -27,7 +27,7 @@ class _Pending:
 
 
 class Transport:
-    """Synchronous request/response client for the qtdriver agent."""
+    """Synchronous request/response client for the liberaqt agent."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = 0, token: str = "",
                  trace: bool = False):
@@ -67,7 +67,7 @@ class Transport:
                 f"could not connect to agent at {self.host}:{self.port}: {last_err}"
             )
 
-        self._reader = threading.Thread(target=self._read_loop, name="qtdriver-reader", daemon=True)
+        self._reader = threading.Thread(target=self._read_loop, name="liberaqt-reader", daemon=True)
         self._reader.start()
 
         self.hello = self._await_hello(timeout=5.0)
@@ -75,7 +75,7 @@ class Transport:
             raise ProtocolError(
                 f"agent speaks protocol {self.hello.get('protocol')}, "
                 f"client speaks {PROTOCOL_VERSION}",
-                hint="Run `qtdriver agents install` to refresh the agent binary.",
+                hint="Run `liberaqt agents install` to refresh the agent binary.",
             )
         self._send({"type": "auth", "token": self.token, "protocol": PROTOCOL_VERSION})
         return self.hello

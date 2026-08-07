@@ -1,6 +1,6 @@
 """pytest integration.
 
-Enabled automatically via the ``pytest11`` entry point. Reads defaults from ``qtdriver.toml``
+Enabled automatically via the ``pytest11`` entry point. Reads defaults from ``liberaqt.toml``
 so tests do not hard-code the executable path.
 """
 
@@ -12,23 +12,23 @@ from typing import Any, Dict
 
 import pytest
 
-from . import QtDriver
+from . import LiberaQt
 
 
 def pytest_addoption(parser: Any) -> None:
-    group = parser.getgroup("qtdriver")
-    group.addoption("--qtdriver-exe", default=None, help="path to the application under test")
-    group.addoption("--qtdriver-qt", default=None, help="force a Qt version, e.g. 6.7")
-    group.addoption("--qtdriver-headless", action="store_true",
+    group = parser.getgroup("liberaqt")
+    group.addoption("--liberaqt-exe", default=None, help="path to the application under test")
+    group.addoption("--liberaqt-qt", default=None, help="force a Qt version, e.g. 6.7")
+    group.addoption("--liberaqt-headless", action="store_true",
                     help="run with the offscreen QPA platform (Linux)")
-    group.addoption("--qtdriver-slowmo", type=float, default=0.0,
+    group.addoption("--liberaqt-slowmo", type=float, default=0.0,
                     help="seconds to sleep before each command, for debugging")
-    group.addoption("--qtdriver-timeout", type=float, default=5.0, help="default action timeout")
-    group.addoption("--qtdriver-trace", action="store_true", help="log every protocol message")
+    group.addoption("--liberaqt-timeout", type=float, default=5.0, help="default action timeout")
+    group.addoption("--liberaqt-trace", action="store_true", help="log every protocol message")
 
 
 def _load_config(rootdir: Path) -> Dict[str, Any]:
-    path = rootdir / "qtdriver.toml"
+    path = rootdir / "liberaqt.toml"
     if not path.exists():
         return {}
     try:
@@ -39,46 +39,46 @@ def _load_config(rootdir: Path) -> Dict[str, Any]:
         except ModuleNotFoundError:
             return {}
     with open(path, "rb") as fh:
-        return tomllib.load(fh).get("qtdriver", {})
+        return tomllib.load(fh).get("liberaqt", {})
 
 
 @pytest.fixture(scope="session")
-def qtdriver_config(pytestconfig: Any) -> Dict[str, Any]:
+def liberaqt_config(pytestconfig: Any) -> Dict[str, Any]:
     cfg = _load_config(Path(str(pytestconfig.rootdir)))
-    if pytestconfig.getoption("--qtdriver-exe"):
-        cfg["executable"] = pytestconfig.getoption("--qtdriver-exe")
-    if pytestconfig.getoption("--qtdriver-qt"):
-        cfg["qt"] = pytestconfig.getoption("--qtdriver-qt")
-    if pytestconfig.getoption("--qtdriver-headless"):
+    if pytestconfig.getoption("--liberaqt-exe"):
+        cfg["executable"] = pytestconfig.getoption("--liberaqt-exe")
+    if pytestconfig.getoption("--liberaqt-qt"):
+        cfg["qt"] = pytestconfig.getoption("--liberaqt-qt")
+    if pytestconfig.getoption("--liberaqt-headless"):
         cfg["headless"] = True
-    cfg.setdefault("executable", os.environ.get("QTDRIVER_EXE"))
-    cfg.setdefault("timeout", pytestconfig.getoption("--qtdriver-timeout"))
+    cfg.setdefault("executable", os.environ.get("LIBERAQT_EXE"))
+    cfg.setdefault("timeout", pytestconfig.getoption("--liberaqt-timeout"))
     return cfg
 
 
 @pytest.fixture(scope="session")
-def qtdriver(pytestconfig: Any, qtdriver_config: Dict[str, Any]):
-    driver = QtDriver(
-        default_timeout=float(qtdriver_config.get("timeout", 5.0)),
-        slowmo=pytestconfig.getoption("--qtdriver-slowmo"),
-        trace=pytestconfig.getoption("--qtdriver-trace"),
+def liberaqt(pytestconfig: Any, liberaqt_config: Dict[str, Any]):
+    driver = LiberaQt(
+        default_timeout=float(liberaqt_config.get("timeout", 5.0)),
+        slowmo=pytestconfig.getoption("--liberaqt-slowmo"),
+        trace=pytestconfig.getoption("--liberaqt-trace"),
     )
     yield driver
     driver.close()
 
 
 @pytest.fixture
-def app(qtdriver, qtdriver_config: Dict[str, Any], request: Any):
+def app(liberaqt, liberaqt_config: Dict[str, Any], request: Any):
     """A fresh AUT process per test. Slower, but tests cannot leak state into each other."""
-    exe = qtdriver_config.get("executable")
+    exe = liberaqt_config.get("executable")
     if not exe:
-        pytest.skip("no application configured (set --qtdriver-exe or qtdriver.toml)")
-    application = qtdriver.launch(
+        pytest.skip("no application configured (set --liberaqt-exe or liberaqt.toml)")
+    application = liberaqt.launch(
         exe,
-        args=qtdriver_config.get("args"),
-        qt=qtdriver_config.get("qt"),
-        object_map=qtdriver_config.get("object_map"),
-        headless=bool(qtdriver_config.get("headless")),
+        args=liberaqt_config.get("args"),
+        qt=liberaqt_config.get("qt"),
+        object_map=liberaqt_config.get("object_map"),
+        headless=bool(liberaqt_config.get("headless")),
     )
     yield application
     _attach_diagnostics(request, application)
@@ -86,15 +86,15 @@ def app(qtdriver, qtdriver_config: Dict[str, Any], request: Any):
 
 
 @pytest.fixture(scope="session")
-def app_session(qtdriver, qtdriver_config: Dict[str, Any]):
+def app_session(liberaqt, liberaqt_config: Dict[str, Any]):
     """One AUT process for the whole session. Faster; use when tests are read-only."""
-    exe = qtdriver_config.get("executable")
+    exe = liberaqt_config.get("executable")
     if not exe:
         pytest.skip("no application configured")
-    application = qtdriver.launch(
-        exe, args=qtdriver_config.get("args"), qt=qtdriver_config.get("qt"),
-        object_map=qtdriver_config.get("object_map"),
-        headless=bool(qtdriver_config.get("headless")),
+    application = liberaqt.launch(
+        exe, args=liberaqt_config.get("args"), qt=liberaqt_config.get("qt"),
+        object_map=liberaqt_config.get("object_map"),
+        headless=bool(liberaqt_config.get("headless")),
     )
     yield application
     application.close()
@@ -109,7 +109,7 @@ def win(app):
 def pytest_runtest_makereport(item: Any, call: Any):
     outcome = yield
     report = outcome.get_result()
-    setattr(item, f"_qtdriver_report_{report.when}", report)
+    setattr(item, f"_liberaqt_report_{report.when}", report)
 
 
 def _attach_diagnostics(request: Any, application) -> None:
@@ -118,10 +118,10 @@ def _attach_diagnostics(request: Any, application) -> None:
     This is the highest-value debugging feature a UI automation tool has: a failed CI run should
     not require reproducing the failure locally.
     """
-    report = getattr(request.node, "_qtdriver_report_call", None)
+    report = getattr(request.node, "_liberaqt_report_call", None)
     if report is None or not report.failed:
         return
-    outdir = Path(str(request.config.rootdir)) / "qtdriver-trace"
+    outdir = Path(str(request.config.rootdir)) / "liberaqt-trace"
     outdir.mkdir(exist_ok=True)
     stem = request.node.name.replace("/", "_")
     try:

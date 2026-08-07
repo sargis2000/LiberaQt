@@ -1,6 +1,6 @@
-# qtdriver — Getting the agent into the process
+# LiberaQT — Getting the agent into the process
 
-Four mechanisms, in order of preference. The launcher tries them in order and `qtdriver doctor`
+Four mechanisms, in order of preference. The launcher tries them in order and `liberaqt doctor`
 explains which one applies to a given app.
 
 ## 1. Qt generic plugin (primary, default)
@@ -14,10 +14,10 @@ The launcher sets:
 
 ```
 QT_PLUGIN_PATH  = <cache>/agents/qt6.7-linux-gcc/plugins   (prepended to existing value)
-QT_QPA_GENERIC_PLUGINS = qtdriver
-QTDRIVER_TOKEN  = <32 random hex chars>
-QTDRIVER_PORT   = 0            # 0 = ephemeral, agent reports back
-QTDRIVER_PORT_FILE = <tmpfile> # agent writes the chosen port here
+QT_QPA_GENERIC_PLUGINS = liberaqt
+LIBERAQT_TOKEN  = <32 random hex chars>
+LIBERAQT_PORT   = 0            # 0 = ephemeral, agent reports back
+LIBERAQT_PORT_FILE = <tmpfile> # agent writes the chosen port here
 ```
 
 Properties:
@@ -33,10 +33,10 @@ the same compiler/C++ stdlib as the host. Hence one agent binary per matrix cell
 
 | Qt | Platform | Compiler | Artifact |
 | --- | --- | --- | --- |
-| 6.7 | Linux x86_64 | gcc 11 (manylinux_2_34) | `libqtdriver.so` |
-| 6.7 | Windows x64 | MSVC 2019/2022 | `qtdriver.dll` |
-| 5.15 | Linux x86_64 | gcc 11 | `libqtdriver.so` |
-| 5.15 | Windows x64 | MSVC 2019 | `qtdriver.dll` |
+| 6.7 | Linux x86_64 | gcc 11 (manylinux_2_34) | `libliberaqt.so` |
+| 6.7 | Windows x64 | MSVC 2019/2022 | `liberaqt.dll` |
+| 5.15 | Linux x86_64 | gcc 11 | `libliberaqt.so` |
+| 5.15 | Windows x64 | MSVC 2019 | `liberaqt.dll` |
 
 `agent_registry.py` detects the AUT's Qt build by inspecting the linked Qt libraries
 (`ldd` / PE import table) before launch, then picks the matching artifact. On a mismatch it fails
@@ -46,7 +46,7 @@ For static Qt builds, plugin loading is unavailable — use mechanism 4.
 
 ## 2. LD_PRELOAD (Linux fallback)
 
-`LD_PRELOAD=libqtdriver_preload.so` with a constructor that dlopens the agent and hooks
+`LD_PRELOAD=libliberaqt_preload.so` with a constructor that dlopens the agent and hooks
 `QCoreApplication` construction. Useful when the app clears `QT_QPA_GENERIC_PLUGINS`, uses a
 custom plugin loader, or bundles its own `qt.conf` that overrides `QT_PLUGIN_PATH`. Same ABI
 constraint applies.
@@ -67,10 +67,10 @@ a v0.3 feature, not v0.1, and the docs should steer people to launch mode.
 Ship a tiny header-only shim:
 
 ```cpp
-#include <qtdriver/embed.h>
+#include <liberaqt/embed.h>
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
-    qtdriver::startIfRequested();   // no-op unless QTDRIVER_TOKEN is set
+    liberaqt::startIfRequested();   // no-op unless LIBERAQT_TOKEN is set
     ...
 }
 ```
@@ -86,7 +86,7 @@ Mitigations, all on by default:
 
 * Bind `127.0.0.1` only, never `0.0.0.0`.
 * Require a per-launch token passed out-of-band via environment.
-* Refuse to start unless `QTDRIVER_TOKEN` is present — so a shipped binary that accidentally
+* Refuse to start unless `LIBERAQT_TOKEN` is present — so a shipped binary that accidentally
   contains the plugin does nothing in production.
 * Single client connection; reject concurrent connects.
 * Loud `qWarning` on startup: the process is automatable.
@@ -99,7 +99,7 @@ The README must state plainly that the agent should never be shipped in a produc
 launcher: pick port file, token, agent dir
 launcher: spawn AUT with env
 agent:    plugin constructed during QGuiApplication ctor
-agent:    singleShot(0) -> bind 127.0.0.1:0 -> write port to QTDRIVER_PORT_FILE
+agent:    singleShot(0) -> bind 127.0.0.1:0 -> write port to LIBERAQT_PORT_FILE
 launcher: poll port file (50 ms, up to --startup-timeout, default 30 s)
 client:   connect -> receive hello -> send auth -> receive ready
 client:   sync.wait_idle -> first window is up

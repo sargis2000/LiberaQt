@@ -9,18 +9,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What is qtdriver?
+## What is LiberaQT?
 
 A Playwright-style UI automation library for Qt desktop applications. It works by injecting a C++ agent (Qt plugin) into the application under test, which exposes the QObject tree over JSON/TCP to a Python client. Supports Qt 5.15 and 6.7, both QWidget and QML, Windows and Linux.
 
 ## Architecture at a glance
 
 ```
-pytest/script (Python) ──JSON/TCP──► qtdriver agent (C++ Qt plugin) ──► QObject tree
+pytest/script (Python) ──JSON/TCP──► liberaqt agent (C++ Qt plugin) ──► QObject tree
 ```
 
 **Three layers:**
-1. **Python client** (`src/qtdriver/`) — User-facing API, selector parsing, pytest plugin, CLI, process launching
+1. **Python client** (`src/liberaqt/`) — User-facing API, selector parsing, pytest plugin, CLI, process launching
 2. **Wire protocol** — Newline-delimited JSON over loopback TCP with token auth
 3. **C++ agent** (`agent/src/`) — Runs inside the AUT; Qt plugin that exposes objects, events, input synthesis
 
@@ -38,29 +38,29 @@ pytest tests/test_selectors.py -v          # Single file with verbose output
 pytest tests/test_selectors.py::test_parse_type_with_nth -v  # Single test
 
 # Integration tests (needs agent + sample app built)
-pytest examples/tests/ --qtdriver-exe build/sample/sample_widgets
+pytest examples/tests/ --liberaqt-exe build/sample/sample_widgets
 
 # Linting and type checking
 ruff check src/ tests/ agent/               # Format and style (ruff is used in CI)
 ruff format src/ tests/                    # Auto-format Python
-mypy src/qtdriver                          # Type checking
+mypy src/liberaqt                          # Type checking
 
 # Build agent (C++)
 cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR -DCMAKE_BUILD_TYPE=Release
 cmake --build build/agent --parallel
-cmake --install build/agent --prefix ~/.cache/qtdriver/agents/qt6.7-linux-x86_64-gcc
+cmake --install build/agent --prefix ~/.cache/liberaqt/agents/qt6.7-linux-x86_64-gcc
 
 # Build sample app
 cmake -S examples/sample_app -B build/sample -DCMAKE_PREFIX_PATH=$QTDIR
 cmake --build build/sample --parallel
 
 # Local development shortcuts
-cmake --build build/agent --parallel && cmake --install build/agent --prefix ~/.cache/qtdriver/agents/qt6.7-linux-x86_64-gcc
+cmake --build build/agent --parallel && cmake --install build/agent --prefix ~/.cache/liberaqt/agents/qt6.7-linux-x86_64-gcc
 ```
 
 ## Key modules and responsibilities
 
-### Python client (`src/qtdriver/`)
+### Python client (`src/liberaqt/`)
 
 | Module | Purpose |
 |--------|---------|
@@ -146,32 +146,32 @@ Newline-delimited JSON over `127.0.0.1` loopback TCP. See `docs/PROTOCOL.md` for
 Register in `conftest.py`:
 
 ```python
-pytest_plugins = ["qtdriver.pytest_plugin"]
+pytest_plugins = ["liberaqt.pytest_plugin"]
 ```
 
-Configuration in `qtdriver.toml`:
+Configuration in `liberaqt.toml`:
 
 ```toml
-[qtdriver]
+[liberaqt]
 executable = "build/myapp"
 object_map = "objects.yaml"
 headless = true
 ```
 
-Fixtures: `app` (launched Application), `caplog_qtdriver` (protocol messages). On failure, writes screenshot + last 200 protocol messages to `qtdriver-trace/`.
+Fixtures: `app` (launched Application), `caplog_liberaqt` (protocol messages). On failure, writes screenshot + last 200 protocol messages to `liberaqt-trace/`.
 
 ## Injection mechanism
 
 **Primary:** Qt generic plugins. Launcher sets:
 
 ```
-QT_QPA_GENERIC_PLUGINS=qtdriver
-QT_PLUGIN_PATH=<dir with generic/qtdriver.so>
-QTDRIVER_PORT=<port>
-QTDRIVER_TOKEN=<random token>
+QT_QPA_GENERIC_PLUGINS=liberaqt
+QT_PLUGIN_PATH=<dir with generic/liberaqt.so>
+LIBERAQT_PORT=<port>
+LIBERAQT_TOKEN=<random token>
 ```
 
-Works on Windows/Linux, Qt 5.15/6.7, widgets and QML, no app changes needed. Fallbacks (LD_PRELOAD, Windows DLL injection, opt-in `QtDriver::start()`) in `docs/INJECTION.md`.
+Works on Windows/Linux, Qt 5.15/6.7, widgets and QML, no app changes needed. Fallbacks (LD_PRELOAD, Windows DLL injection, opt-in `LiberaQt::start()`) in `docs/INJECTION.md`.
 
 ## Testing patterns
 
@@ -184,12 +184,12 @@ pytest tests/test_selectors.py -v
 **Integration tests** (full stack): `examples/tests/test_*.py` — needs built agent + sample app.
 
 ```bash
-pytest examples/tests/test_quick.py -v --qtdriver-exe build/sample/sample_qml
+pytest examples/tests/test_quick.py -v --liberaqt-exe build/sample/sample_qml
 ```
 
 **Adding a new command:**
 1. Add handler in `agent/src/dispatcher.cpp` (runs on GUI thread)
-2. Add transport method in `src/qtdriver/transport.py`
+2. Add transport method in `src/liberaqt/transport.py`
 3. Add client API in appropriate module (`application.py`, `window.py`, `locator.py`)
 4. Update `docs/PROTOCOL.md`
 5. Write test against `examples/sample_app`
@@ -197,9 +197,9 @@ pytest examples/tests/test_quick.py -v --qtdriver-exe build/sample/sample_qml
 
 ## ABI and agent binaries
 
-The agent is a Qt plugin; it must match the AUT's Qt **minor version** (6.7 not 6.8) and **compiler/stdlib ABI**. `agent_registry.py` picks the right binary; `qtdriver doctor ./app` diagnoses mismatches. See `docs/INJECTION.md` for details.
+The agent is a Qt plugin; it must match the AUT's Qt **minor version** (6.7 not 6.8) and **compiler/stdlib ABI**. `agent_registry.py` picks the right binary; `liberaqt doctor ./app` diagnoses mismatches. See `docs/INJECTION.md` for details.
 
-Build layout: `<prefix>/plugins/generic/qtdriver.{so,dll,dylib}`
+Build layout: `<prefix>/plugins/generic/liberaqt.{so,dll,dylib}`
 
 ## Documentation map
 

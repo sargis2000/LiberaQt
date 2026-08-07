@@ -2,8 +2,8 @@
 
 import pytest
 
-from qtdriver import selectors as S
-from qtdriver.errors import InvalidSelectorError
+from liberaqt import selectors as S
+from liberaqt.errors import InvalidSelectorError
 
 
 def test_type_and_object_name():

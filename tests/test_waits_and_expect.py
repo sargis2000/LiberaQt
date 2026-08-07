@@ -4,10 +4,10 @@ import time
 
 import pytest
 
-from qtdriver.errors import QtDriverError
-from qtdriver.errors import TimeoutError as QtTimeoutError
-from qtdriver.expect import expect
-from qtdriver.waits import TimeoutPolicy, retry, wait_until
+from liberaqt.errors import LiberaQtError
+from liberaqt.errors import TimeoutError as LiberaQtTimeoutError
+from liberaqt.expect import expect
+from liberaqt.waits import TimeoutPolicy, retry, wait_until
 
 
 class FakeSession:
@@ -54,7 +54,7 @@ def test_retry_succeeds_after_transient_failures():
     def flaky():
         calls["n"] += 1
         if calls["n"] < 3:
-            raise QtDriverError("not yet")
+            raise LiberaQtError("not yet")
         return "ok"
 
     assert retry(flaky, timeout=2.0, poll=0.01) == "ok"
@@ -74,9 +74,9 @@ def test_retry_attempts_at_least_once_with_zero_timeout():
 
 def test_retry_raises_timeout_with_the_last_error_attached():
     def always_fails():
-        raise QtDriverError("boom")
+        raise LiberaQtError("boom")
 
-    with pytest.raises(QtTimeoutError) as excinfo:
+    with pytest.raises(LiberaQtTimeoutError) as excinfo:
         retry(always_fails, timeout=0.1, poll=0.01, description="thing")
     assert "boom" in str(excinfo.value)
     assert "thing" in str(excinfo.value)

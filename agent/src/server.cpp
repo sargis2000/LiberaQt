@@ -11,7 +11,7 @@
 
 Q_DECLARE_LOGGING_CATEGORY(lcAgent)
 
-namespace qtdriver {
+namespace liberaqt {
 
 Server::Server(Dispatcher &dispatcher, QObject *parent)
     : QObject(parent)
@@ -77,8 +77,8 @@ void Server::sendHello()
 {
     QVariantMap hello;
     hello.insert(QStringLiteral("type"), QStringLiteral("hello"));
-    hello.insert(QStringLiteral("protocol"), QTDRIVER_PROTOCOL);
-    hello.insert(QStringLiteral("agent"), QString::fromUtf8(QTDRIVER_VERSION));
+    hello.insert(QStringLiteral("protocol"), LIBERAQT_PROTOCOL);
+    hello.insert(QStringLiteral("agent"), QString::fromUtf8(LIBERAQT_VERSION));
     hello.insert(QStringLiteral("qt"), QString::fromUtf8(qVersion()));
 #if defined(Q_OS_WIN)
     hello.insert(QStringLiteral("platform"), QStringLiteral("windows"));
@@ -92,7 +92,7 @@ void Server::sendHello()
     QVariantMap app;
     app.insert(QStringLiteral("name"), QCoreApplication::applicationName());
     app.insert(QStringLiteral("widgets"), true);
-#ifdef QTDRIVER_HAVE_QUICK
+#ifdef LIBERAQT_HAVE_QUICK
     app.insert(QStringLiteral("quick"), true);
 #else
     app.insert(QStringLiteral("quick"), false);
@@ -130,7 +130,7 @@ void Server::handleLine(const QByteArray &line)
 
     if (message.value(QStringLiteral("type")).toString() == QLatin1String("auth")) {
         m_authenticated = (message.value(QStringLiteral("token")).toString() == m_token)
-                          && (message.value(QStringLiteral("protocol")).toInt() == QTDRIVER_PROTOCOL);
+                          && (message.value(QStringLiteral("protocol")).toInt() == LIBERAQT_PROTOCOL);
         if (!m_authenticated) {
             qCWarning(lcAgent) << "rejecting client: bad token or protocol";
             QVariantMap err;
@@ -174,4 +174,4 @@ void Server::sendEvent(const QString &name, const QVariantMap &data)
     writeMessage(message);
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

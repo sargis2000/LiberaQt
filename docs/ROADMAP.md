@@ -1,4 +1,4 @@
-# qtdriver — Implementation plan
+# LiberaQT — Implementation plan
 
 Sizes assume one experienced C++/Qt developer plus one Python developer, or one person doing both
 at roughly double the elapsed time.
@@ -54,10 +54,10 @@ Exit criterion: identical test suite green on 5.15 and 6.7 without test-side cha
 ## Milestone 4 — Tooling and DX (3 weeks)
 
 * Recorder: event filter, semantic action inference, selector ranking, codegen.
-* `qtdriver inspect`: live object tree browser + REPL + `--coverage` report on `objectName` usage.
-* `qtdriver doctor`.
+* `liberaqt inspect`: live object tree browser + REPL + `--coverage` report on `objectName` usage.
+* `liberaqt doctor`.
 * pytest plugin polish: screenshot + protocol trace on failure, `--slowmo`, `--headless`.
-* Agent distribution: GitHub Releases + `qtdriver agents install`.
+* Agent distribution: GitHub Releases + `liberaqt agents install`.
 * Documentation site, migration guide from Squish.
 
 Exit criterion: a developer with no context can go from `pip install` to a passing recorded test
@@ -92,4 +92,4 @@ in under 15 minutes on a fresh machine.
 * Recorder produces runnable tests for the sample apps.
 * Documented protocol with a conformance test suite (so alternative agents are possible).
 * Zero known crashes of the AUT caused by the agent.
-* `pip install qtdriver && qtdriver doctor` gives a clean bill of health on a stock machine.
+* `pip install liberaqt && liberaqt doctor` gives a clean bill of health on a stock machine.

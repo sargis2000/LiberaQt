@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List, Optional
 
-from .errors import QtDriverError
+from .errors import LiberaQtError
 from .protocol import Cmd, Event
 from .session import Session
 from .waits import retry
@@ -60,7 +60,7 @@ class Application:
             if title is not None:
                 entries = [e for e in entries if e.get("title") == title]
             if not entries:
-                raise QtDriverError(
+                raise LiberaQtError(
                     f"no window matching title={title!r}",
                     data={"available": [e.get("title") for e in
                                         (self._session.call(Cmd.WINDOW_LIST) or [])]},
@@ -94,7 +94,7 @@ class Application:
         self._closed = True
         try:
             self._session.call(Cmd.QUIT, {"force": False}, timeout=timeout)
-        except QtDriverError:
+        except LiberaQtError:
             pass
         self._session.transport.close()
         if self._process is not None:

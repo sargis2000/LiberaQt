@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from .errors import QtDriverError
+from .errors import LiberaQtError
 from .waits import retry
 
 
@@ -38,7 +38,7 @@ class LocatorAssertions:
         def once():
             try:
                 ok, actual = probe()
-            except QtDriverError as exc:
+            except LiberaQtError as exc:
                 ok, actual = False, f"<{type(exc).__name__}>"
             state["actual"] = actual
             if ok is not self._negated:

@@ -4,19 +4,19 @@
 // injection. This sidesteps every ABI and antivirus problem described in docs/INJECTION.md, and is
 // the only option for statically-linked Qt builds.
 //
-//     #include <qtdriver/embed.h>
+//     #include <liberaqt/embed.h>
 //     int main(int argc, char **argv) {
 //         QApplication app(argc, argv);
-//         qtdriver::startIfRequested();   // no-op unless QTDRIVER_TOKEN is set
+//         liberaqt::startIfRequested();   // no-op unless LIBERAQT_TOKEN is set
 //         ...
 //     }
 #pragma once
 
 #include <QtGlobal>
 
-namespace qtdriver {
+namespace liberaqt {
 
-// Starts the agent if QTDRIVER_TOKEN is present in the environment; otherwise does nothing.
+// Starts the agent if LIBERAQT_TOKEN is present in the environment; otherwise does nothing.
 // Safe to call unconditionally, including in production builds -- but prefer not to ship it.
 Q_DECL_EXPORT void startIfRequested();
 
@@ -24,4 +24,4 @@ Q_DECL_EXPORT void startIfRequested();
 // their own lifecycle.
 Q_DECL_EXPORT void start(quint16 port, const char *token);
 
-} // namespace qtdriver
+} // namespace liberaqt

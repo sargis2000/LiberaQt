@@ -9,7 +9,7 @@
 #include <QMouseEvent>
 #include <QVariantMap>
 
-namespace qtdriver {
+namespace liberaqt {
 
 Recorder::Recorder(ObjectRegistry &registry)
     : m_registry(registry)
@@ -86,4 +86,4 @@ void Recorder::emitAction(const QVariantMap &action)
     Agent::instance().emitEvent(QStringLiteral("record.action"), action);
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

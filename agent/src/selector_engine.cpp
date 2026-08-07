@@ -9,11 +9,11 @@
 #include <QVariant>
 #include <QWindow>
 
-#ifdef QTDRIVER_HAVE_QUICK
+#ifdef LIBERAQT_HAVE_QUICK
 #  include "quick_backend.h"
 #endif
 
-namespace qtdriver {
+namespace liberaqt {
 
 Selector Selector::fromJson(const QVariantMap &json)
 {
@@ -81,7 +81,7 @@ bool SelectorEngine::matchesType(const QObject *object, const Step &step)
             return true;
     }
 
-#ifdef QTDRIVER_HAVE_QUICK
+#ifdef LIBERAQT_HAVE_QUICK
     // QML types report a mangled C++ class name (Button_QMLTYPE_42). Match the declared QML type
     // name too, because that is what the test author sees in the .qml file.
     if (QuickBackend::qmlTypeName(object) == step.type)
@@ -155,7 +155,7 @@ QList<QObject *> SelectorEngine::rootObjects() const
 QList<QObject *> SelectorEngine::childrenOf(QObject *parent) const
 {
     QList<QObject *> result = parent->children();
-#ifdef QTDRIVER_HAVE_QUICK
+#ifdef LIBERAQT_HAVE_QUICK
     QuickBackend::appendVisualChildren(parent, result);
 #endif
     return result;
@@ -232,4 +232,4 @@ QVariantList SelectorEngine::nearMisses(const Selector &selector, QObject *root,
     return result;
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

@@ -9,7 +9,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 
-namespace qtdriver {
+namespace liberaqt {
 
 QString QuickBackend::qmlTypeName(const QObject *object)
 {
@@ -98,4 +98,4 @@ QVariantMap QuickBackend::listViewItem(ObjectRegistry &registry, const QVariantM
                        QStringLiteral("quick.list_view_item lands in milestone 2"));
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

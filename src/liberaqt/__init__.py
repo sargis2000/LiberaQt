@@ -1,8 +1,8 @@
-"""qtdriver -- Playwright-style UI automation for Qt desktop applications.
+"""LiberaQT -- Playwright-style UI automation for Qt desktop applications.
 
-    from qtdriver import qtdriver, expect
+    from liberaqt import liberaqt, expect
 
-    with qtdriver() as qd:
+    with liberaqt() as qd:
         app = qd.launch("./build/myapp")
         win = app.window(title="Login")
         win.locator("QLineEdit#username").fill("sargis")
@@ -23,15 +23,15 @@ from .errors import (
     ConnectionLostError,
     InvalidSelectorError,
     LaunchError,
+    LiberaQtError,
     NotActionableError,
     ObjectNotFoundError,
     ProtocolError,
-    QtDriverError,
     SelectorError,
     StaleObjectError,
     UnsupportedOperationError,
 )
-from .errors import TimeoutError as QtTimeoutError
+from .errors import TimeoutError as LiberaQtTimeoutError
 from .expect import expect
 from .locator import Locator
 from .protocol import PROTOCOL_VERSION
@@ -41,15 +41,15 @@ from .window import Window
 
 __version__ = "0.1.0.dev0"
 __all__ = [
-    "qtdriver", "QtDriver", "Application", "Window", "Locator", "expect", "selectors",
-    "ObjectMap", "QtDriverError", "LaunchError", "AgentMismatchError", "ConnectionLostError",
+    "liberaqt", "LiberaQt", "Application", "Window", "Locator", "expect", "selectors",
+    "ObjectMap", "LiberaQtError", "LaunchError", "AgentMismatchError", "ConnectionLostError",
     "ProtocolError", "SelectorError", "InvalidSelectorError", "ObjectNotFoundError",
-    "AmbiguousSelectorError", "StaleObjectError", "NotActionableError", "QtTimeoutError",
+    "AmbiguousSelectorError", "StaleObjectError", "NotActionableError", "LiberaQtTimeoutError",
     "UnsupportedOperationError", "PROTOCOL_VERSION", "__version__",
 ]
 
 
-class QtDriver:
+class LiberaQt:
     """Entry point. Owns every application it launches and cleans them up on exit."""
 
     def __init__(self, default_timeout: float = 5.0, slowmo: float = 0.0, trace: bool = False):
@@ -71,7 +71,7 @@ class QtDriver:
         transport = Transport(port=process.port, token=process.token, trace=self.trace)
         try:
             transport.connect(timeout=10.0)
-        except QtDriverError:
+        except LiberaQtError:
             process.terminate()
             raise
         session = Session(transport, ObjectMap.load(object_map),
@@ -114,13 +114,13 @@ class QtDriver:
                 pass
         self._apps.clear()
 
-    def __enter__(self) -> "QtDriver":
+    def __enter__(self) -> "LiberaQt":
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
 
 
-def qtdriver(**kwargs: Any) -> QtDriver:
-    """Convenience constructor so ``with qtdriver() as qd:`` reads well."""
-    return QtDriver(**kwargs)
+def liberaqt(**kwargs: Any) -> LiberaQt:
+    """Convenience constructor so ``with liberaqt() as qd:`` reads well."""
+    return LiberaQt(**kwargs)

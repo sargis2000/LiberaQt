@@ -1,8 +1,8 @@
 import pytest
 
-from qtdriver.codegen import render
-from qtdriver.errors import QtDriverError
-from qtdriver.session import ObjectMap
+from liberaqt.codegen import render
+from liberaqt.errors import LiberaQtError
+from liberaqt.session import ObjectMap
 
 
 def test_object_map_flattens_nested_yaml_structure():
@@ -14,7 +14,7 @@ def test_object_map_flattens_nested_yaml_structure():
 
 def test_object_map_unknown_name_suggests_alternatives():
     om = ObjectMap({"login": {"submit": "QPushButton#ok"}})
-    with pytest.raises(QtDriverError) as excinfo:
+    with pytest.raises(LiberaQtError) as excinfo:
         om.resolve("login.missing")
     assert "login.submit" in str(excinfo.value)
 

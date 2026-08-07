@@ -22,14 +22,14 @@ SUPPORTED_QT = ("6.7", "5.15")
 
 
 def cache_dir() -> Path:
-    env = os.environ.get("QTDRIVER_CACHE")
+    env = os.environ.get("LIBERAQT_CACHE")
     if env:
         return Path(env)
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return base / "qtdriver"
+    return base / "liberaqt"
 
 
 @dataclass
@@ -45,7 +45,7 @@ class AgentBuild:
 
     @property
     def library(self) -> Path:
-        name = "qtdriver.dll" if "windows" in self.platform_tag else "libqtdriver.so"
+        name = "liberaqt.dll" if "windows" in self.platform_tag else "libliberaqt.so"
         return self.plugin_dir / "generic" / name
 
     def exists(self) -> bool:
@@ -140,7 +140,7 @@ def _dll_minor_version(dll: Path) -> Optional[int]:
 
 def search_paths() -> List[Path]:
     paths = [cache_dir() / "agents"]
-    env = os.environ.get("QTDRIVER_AGENT_PATH")
+    env = os.environ.get("LIBERAQT_AGENT_PATH")
     if env:
         paths = [Path(p) for p in env.split(os.pathsep) if p] + paths
     paths.append(Path(__file__).resolve().parent / "_agents")
@@ -182,9 +182,9 @@ def resolve(executable: str, qt: Optional[str] = None) -> AgentBuild:
 
     have = ", ".join(str(c) for c in candidates) or "none"
     raise AgentMismatchError(
-        f"no qtdriver agent for Qt {wanted_qt or 'unknown'} on {tag} (installed: {have})",
+        f"no liberaqt agent for Qt {wanted_qt or 'unknown'} on {tag} (installed: {have})",
         hint=(
-            f"qtdriver agents install --qt {wanted_qt or '6.7'}\n"
+            f"liberaqt agents install --qt {wanted_qt or '6.7'}\n"
             "  or build one:  cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR "
             "&& cmake --build build/agent && cmake --install build/agent --prefix "
             f"{cache_dir() / 'agents' / f'qt{wanted_qt or 6.7}-{tag}-local'}"

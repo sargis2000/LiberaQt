@@ -1,4 +1,4 @@
-# qtdriver — Selectors and the Object Map
+# LiberaQT — Selectors and the Object Map
 
 ## 1. Two equivalent forms
 
@@ -63,7 +63,7 @@ substring or `~=` for regex.
 
 ## 4. QWidget vs QML — one API
 
-The same selector language covers both trees. `qtdriver` splices the Quick scene graph into the
+The same selector language covers both trees. `liberaqt` splices the Quick scene graph into the
 object tree, so a `QQuickWidget` embedded in a widget hierarchy is traversed transparently:
 
 ```python
@@ -114,7 +114,7 @@ app = qd.launch("./app", object_map="objects.yaml")
 win.obj("login.submit").click()
 ```
 
-The recorder writes new entries into this file instead of inlining strings, and `qtdriver inspect`
+The recorder writes new entries into this file instead of inlining strings, and `liberaqt inspect`
 can validate that every entry still resolves against a running app — a cheap way to find selectors
 broken by a refactor before the whole suite goes red.
 
@@ -125,5 +125,5 @@ broken by a refactor before the whole suite goes red.
 * Depending on `path` when no `objectName` is set anywhere.
 
 The single highest-leverage thing a team can do is set `objectName` on interactive widgets. The
-docs should say this loudly, and `qtdriver inspect --coverage` reports the percentage of
+docs should say this loudly, and `liberaqt inspect --coverage` reports the percentage of
 interactive objects that have one.

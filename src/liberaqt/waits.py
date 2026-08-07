@@ -6,8 +6,8 @@ import contextlib
 import time
 from typing import Callable, Optional, TypeVar
 
-from .errors import QtDriverError
-from .errors import TimeoutError as QtTimeoutError
+from .errors import LiberaQtError
+from .errors import TimeoutError as LiberaQtTimeoutError
 from .protocol import DEFAULT_TIMEOUT, POLL_INTERVAL
 
 T = TypeVar("T")
@@ -37,7 +37,7 @@ def retry(
     *,
     timeout: float,
     poll: float = POLL_INTERVAL,
-    retry_on: tuple = (QtDriverError,),
+    retry_on: tuple = (LiberaQtError,),
     description: str = "condition",
 ) -> T:
     """Call ``fn`` until it returns without raising a retryable error.
@@ -57,7 +57,7 @@ def retry(
                 break
             time.sleep(poll)
 
-    raise QtTimeoutError(
+    raise LiberaQtTimeoutError(
         f"{description} not satisfied within {timeout:.1f}s after {attempts} attempts:\n  {last}",
         data={"attempts": attempts, "last_error": repr(last)},
     ) from last
@@ -75,5 +75,5 @@ def wait_until(
         if predicate():
             return
         if time.monotonic() >= deadline:
-            raise QtTimeoutError(f"{description} was still false after {timeout:.1f}s")
+            raise LiberaQtTimeoutError(f"{description} was still false after {timeout:.1f}s")
         time.sleep(poll)

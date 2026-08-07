@@ -2,7 +2,7 @@
 
 #include <QVariantMap>
 
-namespace qtdriver {
+namespace liberaqt {
 
 class ObjectRegistry;
 
@@ -13,4 +13,4 @@ public:
     static QVariantMap grab(ObjectRegistry &registry, const QVariantMap &params);
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

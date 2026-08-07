@@ -5,7 +5,7 @@
 #include <QVariantMap>
 #include <functional>
 
-namespace qtdriver {
+namespace liberaqt {
 
 class ObjectRegistry;
 
@@ -51,4 +51,4 @@ private:
     QMap<QString, Handler> m_handlers;
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

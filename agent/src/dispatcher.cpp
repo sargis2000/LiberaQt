@@ -13,7 +13,7 @@
 #include <QCoreApplication>
 #include <QVariantList>
 
-namespace qtdriver {
+namespace liberaqt {
 
 namespace ErrorCode {
 const char *NotFound = "not_found";
@@ -221,4 +221,4 @@ void Dispatcher::registerBuiltins()
     });
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

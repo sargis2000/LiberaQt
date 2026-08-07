@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-HEADER = '''"""Recorded by `qtdriver record`. Review before committing:
+HEADER = '''"""Recorded by `liberaqt record`. Review before committing:
 selectors marked TODO are position-dependent and will break on the next layout change.
 """
 
-from qtdriver import expect
+from liberaqt import expect
 
 
 def {test_name}(app):

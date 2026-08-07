@@ -11,7 +11,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 
-namespace qtdriver {
+namespace liberaqt {
 
 QVariant ValueCodec::encode(const QVariant &value)
 {
@@ -96,4 +96,4 @@ QVariant ValueCodec::decode(const QVariant &json)
     return json;
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

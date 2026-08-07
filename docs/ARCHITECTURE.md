@@ -1,6 +1,6 @@
-# qtdriver — Architecture
+# LiberaQT — Architecture
 
-`qtdriver` is an open-source, Python-only UI automation tool for Qt desktop applications.
+`liberaqt` is an open-source, Python-only UI automation tool for Qt desktop applications.
 Think Playwright, but the "browser" is a Qt process and the "DOM" is the `QObject` tree.
 
 Target Qt versions for v0: **Qt 6.7** and **Qt 5.15**. Target platforms: **Windows** and **Linux**.
@@ -15,7 +15,7 @@ Both **QWidget** and **QML / Qt Quick** are supported from day one.
 |  Python test process         |         |  Application Under Test (AUT)        |
 |                              |         |                                      |
 |  pytest / your script        |         |   +--------------------------------+ |
-|    `-- qtdriver (client)     |  JSON   |   | qtdriver agent (C++ Qt plugin) | |
+|    `-- liberaqt (client)     |  JSON   |   | liberaqt agent (C++ Qt plugin) | |
 |          `-- Transport ------+-------->|   |  * TCP/JSON server             | |
 |              (TCP loopback)  |<--------+---|  * Object registry             | |
 |                              |  events |   |  * Selector engine             | |
@@ -28,9 +28,9 @@ Both **QWidget** and **QML / Qt Quick** are supported from day one.
 
 Three components:
 
-1. **`qtdriver` (Python package)** — what users `pip install`. Public API, selector parsing,
+1. **`liberaqt` (Python package)** — what users `pip install`. Public API, selector parsing,
    auto-waiting, assertions, process launching, pytest plugin, recorder/codegen, CLI.
-2. **`qtdriver-agent` (C++ Qt library)** — loaded inside the AUT. It is the only piece that
+2. **`liberaqt-agent` (C++ Qt library)** — loaded inside the AUT. It is the only piece that
    touches Qt internals. Compiled once per (Qt version, platform, compiler ABI) combination and
    shipped as a downloadable binary.
 3. **Wire protocol** — line-delimited JSON over a loopback TCP socket. See `PROTOCOL.md`.
@@ -51,7 +51,7 @@ slots. Squish solves this by hooking the process; we do the same. The in-process
 
 ## 2. Component breakdown
 
-### 2.1 Python client (`src/qtdriver/`)
+### 2.1 Python client (`src/liberaqt/`)
 
 | Module | Responsibility |
 | --- | --- |
@@ -67,8 +67,8 @@ slots. Squish solves this by hooking the process; we do the same. The in-process
 | `waits.py` | Retry engine, timeout policy, `wait_for_idle()`. |
 | `mouse.py` / `keyboard.py` | Low-level input for cases where locator actions are not enough. |
 | `spy.py` / `codegen.py` | Recorder client + Python source generation. |
-| `cli.py` | `qtdriver doctor / inspect / record / agents`. |
-| `pytest_plugin.py` | Fixtures, screenshot-on-failure, `--qtdriver-*` options. |
+| `cli.py` | `liberaqt doctor / inspect / record / agents`. |
+| `pytest_plugin.py` | Fixtures, screenshot-on-failure, `--liberaqt-*` options. |
 
 Design rules for the client:
 
@@ -77,7 +77,7 @@ Design rules for the client:
 * **Lazy locators.** `window.locator(...)` performs no I/O. Resolution happens at action time and
   is retried until the auto-wait timeout expires. This removes most of the flakiness that
   `find_element`-style APIs have.
-* **No Qt dependency in the client.** `pip install qtdriver` must not need PyQt/PySide.
+* **No Qt dependency in the client.** `pip install liberaqt` must not need PyQt/PySide.
 
 ### 2.2 C++ agent (`agent/`)
 
@@ -100,7 +100,7 @@ on a worker thread; requests are marshalled with `QMetaObject::invokeMethod(...,
 so a blocked GUI thread produces a clean client-side timeout instead of a crash.
 
 **ABI rule:** the agent is a Qt plugin, so it must be built with the same Qt minor version and the
-same compiler/stdlib as the AUT. `agent_registry.py` picks the right binary; `qtdriver doctor`
+same compiler/stdlib as the AUT. `agent_registry.py` picks the right binary; `liberaqt doctor`
 diagnoses mismatches. See `INJECTION.md`.
 
 ---
@@ -113,15 +113,15 @@ Qt instantiates every plugin named in `QT_QPA_GENERIC_PLUGINS` during `QGuiAppli
 construction. The launcher sets:
 
 ```
-QT_QPA_GENERIC_PLUGINS=qtdriver
-QT_PLUGIN_PATH=<dir containing generic/qtdriver.{so,dll}>
-QTDRIVER_PORT=<port>
-QTDRIVER_TOKEN=<random>
+QT_QPA_GENERIC_PLUGINS=liberaqt
+QT_PLUGIN_PATH=<dir containing generic/liberaqt.{so,dll}>
+LIBERAQT_PORT=<port>
+LIBERAQT_TOKEN=<random>
 ```
 
 This works for Qt 5.15 and 6.7, on Windows and Linux, for both widget and QML apps, and requires
 nothing from the application. Fallbacks (`LD_PRELOAD`, Windows DLL injection for attach-to-running,
-and an opt-in in-app `QtDriver::start()` call) are described in `INJECTION.md`.
+and an opt-in in-app `LiberaQt::start()` call) are described in `INJECTION.md`.
 
 ---
 
@@ -166,7 +166,7 @@ candidates ("found 3 QPushButton, none with text 'OK'; closest was 'Ok'").
 
 ## 6. Recording
 
-`qtdriver record ./app` launches the AUT with the agent in recorder mode. The agent installs an
+`liberaqt record ./app` launches the AUT with the agent in recorder mode. The agent installs an
 application-level event filter, converts raw events into semantic actions (click on the widget that
 actually handled it, text committed on focus-out, item-view row selected), computes the most robust
 selector for the target, and streams them. The Python side renders a runnable pytest file.
@@ -179,10 +179,10 @@ with a `# TODO: brittle selector` comment.
 
 ## 7. Packaging and distribution
 
-* `pip install qtdriver` -> pure-Python client + CLI, no agent binaries.
-* `qtdriver agents install --qt 6.7` -> downloads the matching prebuilt agent from GitHub Releases
+* `pip install liberaqt` -> pure-Python client + CLI, no agent binaries.
+* `liberaqt agents install --qt 6.7` -> downloads the matching prebuilt agent from GitHub Releases
   into a user cache dir.
-* Optional platform wheels (`qtdriver-agent-qt67-manylinux`, `-win64`) for air-gapped CI.
+* Optional platform wheels (`liberaqt-agent-qt67-manylinux`, `-win64`) for air-gapped CI.
 * Building the agent from source is one CMake invocation against any Qt install; documented for
   users whose Qt build has a custom ABI.
 

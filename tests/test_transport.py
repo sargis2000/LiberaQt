@@ -6,9 +6,9 @@ import threading
 
 import pytest
 
-from qtdriver.errors import ObjectNotFoundError, QtDriverError
-from qtdriver.protocol import PROTOCOL_VERSION
-from qtdriver.transport import Transport
+from liberaqt.errors import LiberaQtError, ObjectNotFoundError
+from liberaqt.protocol import PROTOCOL_VERSION
+from liberaqt.transport import Transport
 
 
 class FakeAgent:
@@ -103,7 +103,7 @@ def test_events_reach_listeners():
 
 def test_call_without_connection_raises():
     t = Transport(port=1, token="tok")
-    with pytest.raises(QtDriverError):
+    with pytest.raises(LiberaQtError):
         t.call("session.ping")
 
 

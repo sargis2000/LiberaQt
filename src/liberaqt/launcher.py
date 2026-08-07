@@ -63,13 +63,13 @@ def build_environment(agent: "agent_registry.AgentBuild", token: str, port_file:
     env["QT_PLUGIN_PATH"] = f"{plugin_path}{os.pathsep}{existing}" if existing else plugin_path
 
     generic = env.get("QT_QPA_GENERIC_PLUGINS", "")
-    env["QT_QPA_GENERIC_PLUGINS"] = f"{generic},qtdriver" if generic else "qtdriver"
+    env["QT_QPA_GENERIC_PLUGINS"] = f"{generic},liberaqt" if generic else "liberaqt"
 
-    env["QTDRIVER_TOKEN"] = token
-    env["QTDRIVER_PORT"] = "0"                     # 0 -> agent binds an ephemeral port
-    env["QTDRIVER_PORT_FILE"] = str(port_file)
+    env["LIBERAQT_TOKEN"] = token
+    env["LIBERAQT_PORT"] = "0"                     # 0 -> agent binds an ephemeral port
+    env["LIBERAQT_PORT_FILE"] = str(port_file)
     if record:
-        env["QTDRIVER_RECORD"] = "1"
+        env["LIBERAQT_RECORD"] = "1"
 
     # Deterministic-ish UI: disable OS animations and scale rounding surprises.
     env.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
@@ -86,7 +86,7 @@ def launch(executable: str, args: Optional[List[str]] = None, cwd: Optional[str]
 
     agent = agent_registry.resolve(str(exe), qt=qt)
     token = secrets.token_hex(16)
-    port_file = Path(tempfile.mkdtemp(prefix="qtdriver-")) / "port"
+    port_file = Path(tempfile.mkdtemp(prefix="liberaqt-")) / "port"
 
     child_env = build_environment(agent, token, port_file, env, record=record)
     if headless:
@@ -141,10 +141,10 @@ def _await_port(popen: subprocess.Popen, port_file: Path, timeout: float,
 
     popen.kill()
     raise LaunchError(
-        f"the qtdriver agent did not report a port within {timeout:.0f}s",
+        f"the liberaqt agent did not report a port within {timeout:.0f}s",
         hint=(
             "Most likely causes, in order:\n"
-            "    1. Agent/Qt ABI mismatch  -> qtdriver doctor\n"
+            "    1. Agent/Qt ABI mismatch  -> liberaqt doctor\n"
             "    2. A bundled qt.conf overrides QT_PLUGIN_PATH -> use LD_PRELOAD mode\n"
             "    3. The app never constructs a QGuiApplication -> use the in-app embed API\n"
             "  Re-run with QT_DEBUG_PLUGINS=1 for Qt's full plugin loader trace."

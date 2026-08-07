@@ -5,7 +5,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 
-namespace qtdriver {
+namespace liberaqt {
 
 IdleTracker::IdleTracker() = default;
 
@@ -48,4 +48,4 @@ int IdleTracker::waitForIdle(int quietMs, bool animations, bool network, int tim
     return -1;
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

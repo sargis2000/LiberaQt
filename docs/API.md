@@ -1,14 +1,14 @@
-# qtdriver — Python API design
+# LiberaQT — Python API design
 
-Design target: a test written against `qtdriver` should read like a Playwright test, and a
+Design target: a test written against `liberaqt` should read like a Playwright test, and a
 developer who has never seen the tool should be able to guess the method name.
 
 ## 1. Hello world
 
 ```python
-from qtdriver import qtdriver
+from liberaqt import liberaqt
 
-with qtdriver() as qd:
+with liberaqt() as qd:
     app = qd.launch("./build/myapp", args=["--no-splash"])
     win = app.window(title="Login")
 
@@ -114,7 +114,7 @@ menu = win.menu("File/Recent/foo.txt").trigger()
 ## 6. Assertions
 
 ```python
-from qtdriver import expect
+from liberaqt import expect
 
 expect(loc).to_be_visible(timeout=5)
 expect(loc).to_be_enabled()
@@ -152,23 +152,23 @@ with qd.timeout(30):
 
 ```python
 # conftest.py
-pytest_plugins = ["qtdriver.pytest_plugin"]
+pytest_plugins = ["liberaqt.pytest_plugin"]
 
 # test_login.py
-def test_login(app):                 # fixture launches from qtdriver.toml
+def test_login(app):                 # fixture launches from liberaqt.toml
     win = app.window(title="Login")
     ...
 ```
 
-Fixtures: `qtdriver` (session), `app` (function, fresh process), `app_session` (session-scoped for
-speed), `win`. Options: `--qtdriver-exe`, `--qtdriver-qt`, `--qtdriver-headless`,
-`--qtdriver-slowmo`, `--qtdriver-trace`. On failure the plugin attaches a screenshot and the last
+Fixtures: `liberaqt` (session), `app` (function, fresh process), `app_session` (session-scoped for
+speed), `win`. Options: `--liberaqt-exe`, `--liberaqt-qt`, `--liberaqt-headless`,
+`--liberaqt-slowmo`, `--liberaqt-trace`. On failure the plugin attaches a screenshot and the last
 N protocol messages to the report — the single most useful debugging feature a UI tool can have.
 
-Config file `qtdriver.toml`:
+Config file `liberaqt.toml`:
 
 ```toml
-[qtdriver]
+[liberaqt]
 executable = "build/myapp"
 args = ["--test-mode"]
 qt = "6.7"
@@ -180,17 +180,17 @@ headless = true          # Linux: run under Xvfb / offscreen QPA
 ## 9. CLI
 
 ```
-qtdriver doctor                  # env check: Qt found, agent ABI match, ptrace scope, display
-qtdriver agents list|install     # manage prebuilt agent binaries
-qtdriver inspect ./myapp         # launch + interactive object browser (REPL + tree dump)
-qtdriver record ./myapp -o test_x.py
-qtdriver run tests/              # thin pytest wrapper with sane defaults
+liberaqt doctor                  # env check: Qt found, agent ABI match, ptrace scope, display
+liberaqt agents list|install     # manage prebuilt agent binaries
+liberaqt inspect ./myapp         # launch + interactive object browser (REPL + tree dump)
+liberaqt record ./myapp -o test_x.py
+liberaqt run tests/              # thin pytest wrapper with sane defaults
 ```
 
 ## 10. Error taxonomy
 
 ```
-QtDriverError
+LiberaQtError
 ├── LaunchError            (agent never connected; carries AUT stderr)
 ├── AgentMismatchError     (ABI / Qt version mismatch, with fix command)
 ├── ConnectionError        (socket dropped mid-run; carries crash info)

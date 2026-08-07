@@ -10,7 +10,7 @@ import base64
 import os
 from typing import Any, Optional
 
-from .errors import QtDriverError
+from .errors import LiberaQtError
 from .protocol import Cmd
 from .transport import Transport
 from .waits import TimeoutPolicy
@@ -29,12 +29,12 @@ class ObjectMap:
         if not path:
             return cls()
         if not os.path.exists(path):
-            raise QtDriverError(f"object map not found: {path}")
+            raise LiberaQtError(f"object map not found: {path}")
         try:
             import yaml  # noqa: PLC0415 - optional dependency
         except ImportError as exc:
-            raise QtDriverError(
-                "object maps need PyYAML", hint="pip install 'qtdriver[yaml]'"
+            raise LiberaQtError(
+                "object maps need PyYAML", hint="pip install 'liberaqt[yaml]'"
             ) from exc
         with open(path, encoding="utf-8") as fh:
             return cls(yaml.safe_load(fh) or {})
@@ -52,7 +52,7 @@ class ObjectMap:
             return self._flat[name]
         except KeyError as exc:
             close = [k for k in self._flat if name.split(".")[0] in k][:5]
-            raise QtDriverError(
+            raise LiberaQtError(
                 f"'{name}' is not in the object map",
                 hint=f"did you mean one of: {close}" if close else "check objects.yaml",
             ) from exc

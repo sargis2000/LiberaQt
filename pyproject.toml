@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "qtdriver"
+name = "liberaqt"
 version = "0.1.0.dev0"
 description = "Playwright-style UI automation for Qt desktop applications (Qt 5.15 / 6.7), Python-only."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
-authors = [{ name = "qtdriver contributors" }]
+authors = [{ name = "LiberaQT contributors" }]
 keywords = ["qt", "qml", "gui", "testing", "automation", "squish", "pyside", "pytest"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -34,18 +34,18 @@ dev = [
 ]
 
 [project.scripts]
-qtdriver = "qtdriver.cli:main"
+liberaqt = "liberaqt.cli:main"
 
 [project.entry-points.pytest11]
-qtdriver = "qtdriver.pytest_plugin"
+liberaqt = "liberaqt.pytest_plugin"
 
 [project.urls]
-Homepage = "https://github.com/OWNER/qtdriver"
-Documentation = "https://github.com/OWNER/qtdriver/tree/main/docs"
-Issues = "https://github.com/OWNER/qtdriver/issues"
+Homepage = "https://github.com/OWNER/liberaqt"
+Documentation = "https://github.com/OWNER/liberaqt/tree/main/docs"
+Issues = "https://github.com/OWNER/liberaqt/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/qtdriver"]
+packages = ["src/liberaqt"]
 
 [tool.ruff]
 line-length = 100

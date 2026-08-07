@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from qtdriver import expect
+from liberaqt import expect
 
 
 @pytest.fixture
-def quick_app(qtdriver, qtdriver_config):
-    exe = qtdriver_config.get("quick_executable", "build/sample/sample_quick")
+def quick_app(liberaqt, liberaqt_config):
+    exe = liberaqt_config.get("quick_executable", "build/sample/sample_quick")
     if sys.platform == "win32" and not Path(exe).exists() and Path(f"{exe}.exe").exists():
         exe = f"{exe}.exe"
-    app = qtdriver.launch(exe, headless=bool(qtdriver_config.get("headless")))
+    app = liberaqt.launch(exe, headless=bool(liberaqt_config.get("headless")))
     yield app
     app.close()
 

@@ -81,7 +81,7 @@ class Window(Locator):
         return Mouse(self._session, self._handle)
 
     def tree(self, depth: int = -1, visual_only: bool = True) -> dict:
-        """Dump this window's object tree. Used by `qtdriver inspect` and failure reports."""
+        """Dump this window's object tree. Used by `liberaqt inspect` and failure reports."""
         return self._session.call(Cmd.TREE, {"root": self._handle, "depth": depth,
                                              "visual_only": visual_only})
 

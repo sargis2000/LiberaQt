@@ -1,10 +1,10 @@
 """Example suite against the sample QWidget application.
 
 Run with:
-    pytest examples/tests/test_widgets.py --qtdriver-exe build/sample/sample_widgets
+    pytest examples/tests/test_widgets.py --liberaqt-exe build/sample/sample_widgets
 """
 
-from qtdriver import expect
+from liberaqt import expect
 
 
 def test_login_shows_welcome(app):

@@ -1,11 +1,11 @@
-# qtdriver — Wire Protocol v1
+# LiberaQT — Wire Protocol v1
 
 Transport: **TCP over `127.0.0.1`**, newline-delimited UTF-8 JSON (one JSON object per line, no
 embedded raw newlines). Chosen over shared memory / named pipes because it is identical on Windows
 and Linux, trivially debuggable with `nc`, and lets the agent live behind a container boundary later.
 
 The agent binds an ephemeral port and writes it to `stdout` as a handshake banner *and* to
-`$QTDRIVER_PORT_FILE` if set, so the launcher never has to guess.
+`$LIBERAQT_PORT_FILE` if set, so the launcher never has to guess.
 
 ## 0. Handshake
 
@@ -19,7 +19,7 @@ On connect the agent sends:
 The client replies:
 
 ```json
-{"type":"auth","token":"<QTDRIVER_TOKEN>","protocol":1}
+{"type":"auth","token":"<LIBERAQT_TOKEN>","protocol":1}
 ```
 
 Wrong token or unsupported protocol -> agent sends `{"type":"error",...}` and closes. The token is
@@ -173,7 +173,7 @@ Emits `record.action` events: `{"action":"click","selector":"...","target_info":
 ## 5. Versioning
 
 `protocol` is a single integer. The client refuses to run against a different major and prints the
-exact `qtdriver agents install` command to fix it. Additive fields are allowed within a version;
+exact `liberaqt agents install` command to fix it. Additive fields are allowed within a version;
 removals and renames are not.
 
 ## 6. Worked example

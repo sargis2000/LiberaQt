@@ -3,8 +3,8 @@
 ## Layout
 
 ```
-qtdriver/
-├── src/qtdriver/        Python client (pure Python, no Qt dependency)
+liberaqt/
+├── src/liberaqt/        Python client (pure Python, no Qt dependency)
 ├── agent/               C++ Qt agent (CMake)
 ├── examples/            Sample widget + QML app and example tests
 ├── docs/                Design documents (this folder)
@@ -16,10 +16,10 @@ qtdriver/
 ```bash
 cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR -DCMAKE_BUILD_TYPE=Release
 cmake --build build/agent --parallel
-cmake --install build/agent --prefix ~/.cache/qtdriver/agents/qt6.7-linux-gcc
+cmake --install build/agent --prefix ~/.cache/liberaqt/agents/qt6.7-linux-gcc
 ```
 
-The install layout must be `<prefix>/plugins/generic/libqtdriver.so` — that is what
+The install layout must be `<prefix>/plugins/generic/libliberaqt.so` — that is what
 `QT_PLUGIN_PATH` expects.
 
 ## Running the client tests

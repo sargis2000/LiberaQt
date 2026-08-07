@@ -6,7 +6,7 @@
 
 class QObject;
 
-namespace qtdriver {
+namespace liberaqt {
 
 class ObjectRegistry;
 
@@ -35,4 +35,4 @@ public:
     static QVariantMap listViewItem(ObjectRegistry &registry, const QVariantMap &params);
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

@@ -1,5 +1,0 @@
-# Repo-level qtdriver config, picked up by the pytest plugin (rootdir/qtdriver.toml).
-# The executable is passed on the command line (--qtdriver-exe) so this file stays
-# platform-neutral; see examples/qtdriver.toml for a full user-facing example.
-[qtdriver]
-object_map = "examples/objects.yaml"

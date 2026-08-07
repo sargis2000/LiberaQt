@@ -1,4 +1,4 @@
-"""Command line interface: ``qtdriver <command>``."""
+"""Command line interface: ``liberaqt <command>``."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import QtDriver, __version__, agent_registry
-from .errors import QtDriverError
+from . import LiberaQt, __version__, agent_registry
+from .errors import LiberaQtError
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Environment check. First thing to run when something does not work."""
-    print(f"qtdriver {__version__}  (protocol 1)")
+    print(f"liberaqt {__version__}  (protocol 1)")
     print(f"python   {sys.version.split()[0]}  on {agent_registry.current_platform_tag()}")
     print(f"cache    {agent_registry.cache_dir()}")
 
@@ -26,7 +26,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"  - {b}  ->  {b.library}")
     else:
         print("agents installed: NONE")
-        print("  fix: qtdriver agents install --qt 6.7")
+        print("  fix: liberaqt agents install --qt 6.7")
 
     ok = bool(builds)
     if args.exe:
@@ -36,7 +36,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         try:
             build = agent_registry.resolve(args.exe)
             print(f"  matching agent: {build}")
-        except QtDriverError as exc:
+        except LiberaQtError as exc:
             ok = False
             print(f"  NO MATCHING AGENT\n{exc}")
 
@@ -87,7 +87,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
 
 def cmd_inspect(args: argparse.Namespace) -> int:
     """Launch the app and dump (or browse) its object tree."""
-    with QtDriver(trace=args.trace) as qd:
+    with LiberaQt(trace=args.trace) as qd:
         app = qd.launch(args.exe, args=args.app_args, qt=args.qt)
         app.wait_for_idle()
         for window in app.windows:
@@ -96,7 +96,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         if args.interactive:
             import code
             code.interact(
-                banner="qtdriver inspect -- `app`, `win` are bound. Ctrl-D to quit.",
+                banner="liberaqt inspect -- `app`, `win` are bound. Ctrl-D to quit.",
                 local={"app": app, "win": app.windows[0] if app.windows else None, "qd": qd},
             )
     return 0
@@ -105,7 +105,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 def cmd_record(args: argparse.Namespace) -> int:
     from .spy import Recorder
 
-    with QtDriver() as qd:
+    with LiberaQt() as qd:
         app = qd.launch(args.exe, args=args.app_args, qt=args.qt, record=True)
         recorder = Recorder(app)
         recorder.start()
@@ -133,8 +133,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="qtdriver", description=__doc__)
-    parser.add_argument("--version", action="version", version=f"qtdriver {__version__}")
+    parser = argparse.ArgumentParser(prog="liberaqt", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"liberaqt {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("doctor", help="check the environment")
@@ -179,7 +179,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except QtDriverError as exc:
+    except LiberaQtError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

@@ -14,7 +14,7 @@
 
 Q_DECLARE_LOGGING_CATEGORY(lcAgent)
 
-namespace qtdriver {
+namespace liberaqt {
 
 Agent &Agent::instance()
 {
@@ -39,8 +39,8 @@ void Agent::start()
         return;
     m_started = true;
 
-    const QByteArray token = qgetenv("QTDRIVER_TOKEN");
-    const quint16 requested = static_cast<quint16>(qgetenv("QTDRIVER_PORT").toUShort());
+    const QByteArray token = qgetenv("LIBERAQT_TOKEN");
+    const quint16 requested = static_cast<quint16>(qgetenv("LIBERAQT_PORT").toUShort());
 
     if (!m_server->listen(QStringLiteral("127.0.0.1"), requested, QString::fromUtf8(token))) {
         qCCritical(lcAgent) << "failed to listen:" << m_server->errorString();
@@ -50,10 +50,10 @@ void Agent::start()
     publishPort(m_server->port());
     installWindowWatcher();
 
-    if (!qEnvironmentVariableIsEmpty("QTDRIVER_RECORD"))
+    if (!qEnvironmentVariableIsEmpty("LIBERAQT_RECORD"))
         m_recorder->start(QStringLiteral("semantic"));
 
-    qCInfo(lcAgent) << "qtdriver agent listening on 127.0.0.1:" << m_server->port();
+    qCInfo(lcAgent) << "liberaqt agent listening on 127.0.0.1:" << m_server->port();
 }
 
 void Agent::stop()
@@ -66,7 +66,7 @@ void Agent::stop()
 // GUI subsystem binaries on Windows and have no usable stdout at all.
 void Agent::publishPort(quint16 port)
 {
-    const QByteArray path = qgetenv("QTDRIVER_PORT_FILE");
+    const QByteArray path = qgetenv("LIBERAQT_PORT_FILE");
     if (path.isEmpty())
         return;
     QFile file(QString::fromLocal8Bit(path));
@@ -105,4 +105,4 @@ void Agent::emitEvent(const QString &name, const QVariantMap &data)
     m_server->sendEvent(name, data);
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

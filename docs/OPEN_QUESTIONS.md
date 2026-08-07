@@ -8,7 +8,7 @@ Milestone 0.
 1. **Who is the user?** Your own QA team (you control the app's build -> the in-app embed option
    in `INJECTION.md` becomes the default and a lot of pain disappears), or the public (injection
    must work on binaries you have never seen)?
-2. **Is Squish migration a goal?** If teams are moving off Squish, a `squish2qtdriver` script that
+2. **Is Squish migration a goal?** If teams are moving off Squish, a `squish2liberaqt` script that
    converts `.py` Squish scripts and object maps mechanically is worth roughly a milestone of its
    own, and is the single strongest adoption lever.
 3. **Do you need a recorder in v1**, or is hand-written test code acceptable at first? The recorder
@@ -35,8 +35,8 @@ Milestone 0.
 
 11. **Licence:** Apache-2.0 assumed. MIT if you want maximum permissiveness with no patent grant;
     LGPL only if you plan to link Qt statically and distribute.
-12. **Project name:** `qtdriver` is used as a placeholder throughout. Check PyPI availability and
+12. **Project name:** `liberaqt` is used as a placeholder throughout. Check PyPI availability and
     that it does not collide with the Qt Company's trademarks — a name containing "Qt" is
-    acceptable descriptive use, but "QtDriver by the Qt Company"-style branding is not.
+    acceptable descriptive use, but "LiberaQt by the Qt Company"-style branding is not.
 13. **Repo layout:** monorepo (client + agent, as scaffolded) or split repos? Monorepo is
     recommended: the protocol is versioned in lockstep.

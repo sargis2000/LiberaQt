@@ -7,7 +7,7 @@ class QObject;
 class QWidget;
 class QPoint;
 
-namespace qtdriver {
+namespace liberaqt {
 
 class ObjectRegistry;
 
@@ -33,4 +33,4 @@ public:
     // TODO(m1): itemRect(), selectItem(), menuTrigger(), tabSelect()
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

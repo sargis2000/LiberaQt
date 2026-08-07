@@ -6,7 +6,7 @@
 class QTcpServer;
 class QTcpSocket;
 
-namespace qtdriver {
+namespace liberaqt {
 
 class Dispatcher;
 
@@ -45,4 +45,4 @@ private:
     bool m_authenticated = false;
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

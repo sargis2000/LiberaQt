@@ -14,7 +14,7 @@
 #include <QWidget>
 #include <QWindow>
 
-namespace qtdriver {
+namespace liberaqt {
 
 QVariantList WidgetBackend::listWindows(ObjectRegistry &registry)
 {
@@ -200,4 +200,4 @@ QVariantMap WidgetBackend::dumpTree(QObject *root, ObjectRegistry &registry, int
     return node;
 }
 
-} // namespace qtdriver
+} // namespace liberaqt

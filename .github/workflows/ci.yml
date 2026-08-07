@@ -60,25 +60,25 @@ jobs:
       - name: Integration tests (Linux, offscreen)
         if: runner.os == 'Linux'
         env:
-          QTDRIVER_AGENT_PATH: ${{ github.workspace }}/agents
+          LIBERAQT_AGENT_PATH: ${{ github.workspace }}/agents
         run: |
           xvfb-run -a pytest examples/tests/ -q \
-            --qtdriver-exe build/sample/sample_widgets \
-            --qtdriver-qt ${{ matrix.qt }}
+            --liberaqt-exe build/sample/sample_widgets \
+            --liberaqt-qt ${{ matrix.qt }}
 
       - name: Integration tests (Windows)
         if: runner.os == 'Windows'
         env:
-          QTDRIVER_AGENT_PATH: ${{ github.workspace }}/agents
+          LIBERAQT_AGENT_PATH: ${{ github.workspace }}/agents
         run: |
-          pytest examples/tests/ -q --qtdriver-exe build/sample/Release/sample_widgets.exe --qtdriver-qt ${{ matrix.qt }}
+          pytest examples/tests/ -q --liberaqt-exe build/sample/Release/sample_widgets.exe --liberaqt-qt ${{ matrix.qt }}
 
       - name: Upload failure traces
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: qtdriver-trace-${{ matrix.tag }}
-          path: qtdriver-trace/
+          name: liberaqt-trace-${{ matrix.tag }}
+          path: liberaqt-trace/
 
       - name: Upload agent artifact
         uses: actions/upload-artifact@v4

@@ -1,4 +1,4 @@
-"""Exception hierarchy for qtdriver.
+"""Exception hierarchy for liberaqt.
 
 Every error carries enough context to debug a failing test without re-running it:
 the selector, the resolved handle (if any), and a one-line remediation hint.
@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
-class QtDriverError(Exception):
+class LiberaQtError(Exception):
     """Base class for everything this package raises."""
 
     hint: str = ""
@@ -24,28 +24,28 @@ class QtDriverError(Exception):
         super().__init__(full)
 
 
-class LaunchError(QtDriverError):
+class LaunchError(LiberaQtError):
     """The AUT started but the agent never connected."""
 
     hint = (
-        "Run with QT_DEBUG_PLUGINS=1 to see whether Qt found the qtdriver plugin, "
-        "and check `qtdriver doctor` for an agent/Qt ABI mismatch."
+        "Run with QT_DEBUG_PLUGINS=1 to see whether Qt found the liberaqt plugin, "
+        "and check `liberaqt doctor` for an agent/Qt ABI mismatch."
     )
 
 
-class AgentMismatchError(QtDriverError):
+class AgentMismatchError(LiberaQtError):
     """No prebuilt agent matches the AUT's Qt build."""
 
 
-class ConnectionLostError(QtDriverError):
+class ConnectionLostError(LiberaQtError):
     """The socket dropped mid-run, usually because the AUT crashed."""
 
 
-class ProtocolError(QtDriverError):
+class ProtocolError(LiberaQtError):
     """The agent said something we do not understand."""
 
 
-class SelectorError(QtDriverError):
+class SelectorError(LiberaQtError):
     """Base for selector resolution problems."""
 
 
@@ -54,7 +54,7 @@ class InvalidSelectorError(SelectorError):
 
 
 class ObjectNotFoundError(SelectorError):
-    hint = "Check `qtdriver inspect` for the live object tree; near-misses are listed below."
+    hint = "Check `liberaqt inspect` for the live object tree; near-misses are listed below."
 
     def __init__(self, selector: Any, near_misses: Optional[list] = None, **kw: Any):
         msg = f"no object matched selector: {selector}"
@@ -84,15 +84,15 @@ class StaleObjectError(SelectorError):
     hint = "The object was destroyed. Re-resolve the locator instead of caching handles."
 
 
-class NotActionableError(QtDriverError):
+class NotActionableError(LiberaQtError):
     hint = "Wait for the precondition explicitly, or check whether a modal dialog is covering it."
 
 
-class TimeoutError(QtDriverError):  # noqa: A001 - intentionally shadows builtin within package
+class TimeoutError(LiberaQtError):  # noqa: A001 - intentionally shadows builtin within package
     """A wait or an agent command exceeded its deadline."""
 
 
-class UnsupportedOperationError(QtDriverError):
+class UnsupportedOperationError(LiberaQtError):
     """Valid request, wrong object type or Qt version."""
 
 
@@ -103,17 +103,17 @@ ERROR_CODE_MAP = {
     "not_actionable": NotActionableError,
     "unsupported": UnsupportedOperationError,
     "invalid_params": ProtocolError,
-    "internal": QtDriverError,
+    "internal": LiberaQtError,
     "timeout": TimeoutError,
 }
 
 
-def from_agent_error(payload: dict, selector: Any = None) -> QtDriverError:
+def from_agent_error(payload: dict, selector: Any = None) -> LiberaQtError:
     """Translate a protocol error object into a Python exception."""
     code = payload.get("code", "internal")
     message = payload.get("message", "agent error")
     data = payload.get("data", {}) or {}
-    cls = ERROR_CODE_MAP.get(code, QtDriverError)
+    cls = ERROR_CODE_MAP.get(code, LiberaQtError)
     if cls is ObjectNotFoundError:
         return ObjectNotFoundError(selector or data.get("context"), data.get("near_misses"), data=data)
     if cls is AmbiguousSelectorError:

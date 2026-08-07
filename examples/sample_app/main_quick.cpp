@@ -4,7 +4,7 @@
 int main(int argc, char **argv)
 {
     QGuiApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("qtdriver-sample-quick"));
+    app.setApplicationName(QStringLiteral("liberaqt-sample-quick"));
 
     QQmlApplicationEngine engine;
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));

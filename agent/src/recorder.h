@@ -3,7 +3,7 @@
 #include <QVariantMap>
 #include <QObject>
 
-namespace qtdriver {
+namespace liberaqt {
 
 class ObjectRegistry;
 
@@ -40,4 +40,4 @@ private:
     QString m_granularity;
 };
 
-} // namespace qtdriver
+} // namespace liberaqt

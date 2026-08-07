@@ -5,7 +5,7 @@
 #include <QPointer>
 #include <QString>
 
-namespace qtdriver {
+namespace liberaqt {
 
 // Maps QObject* <-> opaque string handles ("o17"). Handles are stable for the lifetime of the
 // object and are invalidated automatically when it is destroyed, so a stale handle produces a
@@ -32,4 +32,4 @@ private:
     quint64 m_nextId = 1;
 };
 
-} // namespace qtdriver
+} // namespace liberaqt
