@@ -69,8 +69,14 @@ QVariant ValueCodec::encode(const QVariant &value)
         break;
     }
 
-    // Enums registered with Q_ENUM come through with a readable name.
-    // TODO(m1): look the enum up via QMetaObject to emit {"__enum": "Qt::AlignLeft", "value": 1}.
+    // Enums travel as {"__enum": "QLineEdit::EchoMode", "value": 2}: the client compares against
+    // plain ints, the type name stays available for diagnostics.
+    if (compat::isEnumeration(value)) {
+        QVariantMap enumMap;
+        enumMap.insert(QStringLiteral("__enum"), compat::variantTypeName(value));
+        enumMap.insert(QStringLiteral("value"), value.toInt());
+        return enumMap;
+    }
 
     QVariantMap opaque;
     opaque.insert(QStringLiteral("__opaque"), compat::variantTypeName(value));

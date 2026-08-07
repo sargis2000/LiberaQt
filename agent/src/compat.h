@@ -35,6 +35,15 @@ inline QString variantTypeName(const QVariant &v)
 #endif
 }
 
+inline bool isEnumeration(const QVariant &v)
+{
+#if QTDRIVER_QT6
+    return v.metaType().flags().testFlag(QMetaType::IsEnumeration);
+#else
+    return QMetaType::typeFlags(v.userType()).testFlag(QMetaType::IsEnumeration);
+#endif
+}
+
 // Qt 6 removed the implicit QString -> QVariant metatype lookups used by invokeMethod helpers.
 inline bool canConvert(const QVariant &v, int typeId)
 {

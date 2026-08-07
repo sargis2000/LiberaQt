@@ -27,7 +27,10 @@ public:
     // Centre of the object in window coordinates, adjusted if the centre is obscured.
     static bool interactionPoint(QObject *object, QPoint *out);
 
-    // TODO(m1): itemRect(), modelData(), selectItem(), menuTrigger(), tabSelect()
+    // Read a model-backed view's contents: {"rows": [{header: value, ...}, ...]}.
+    static QVariantMap modelData(QObject *object, int maxRows = -1);
+
+    // TODO(m1): itemRect(), selectItem(), menuTrigger(), tabSelect()
 };
 
 } // namespace qtdriver

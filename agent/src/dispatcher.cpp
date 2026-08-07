@@ -1,5 +1,6 @@
 #include "dispatcher.h"
 
+#include "idle_tracker.h"
 #include "input_synth.h"
 #include "object_registry.h"
 #include "screenshot.h"
@@ -169,8 +170,33 @@ void Dispatcher::registerBuiltins()
         return QVariantMap{};
     });
 
-    // TODO(m1): object.list_properties, object.invoke, quick.*, widget.*, sync.*, record.*
+    // TODO(m1): object.list_properties, object.invoke, quick.*, widget.*, record.*
     // Each new command needs: PROTOCOL.md entry, handler here, Python method, and a test.
+
+    // ---- synchronisation -------------------------------------------------
+    registerCommand(QStringLiteral("sync.wait_idle"), [](const QVariantMap &params) -> QVariant {
+        const int quietMs = params.value(QStringLiteral("quiet_ms"), 50).toInt();
+        const bool animations = params.value(QStringLiteral("animations"), true).toBool();
+        const bool network = params.value(QStringLiteral("network"), false).toBool();
+        const int timeoutMs = params.value(QStringLiteral("timeout_ms"), 10000).toInt();
+
+        IdleTracker tracker;
+        const int waited = tracker.waitForIdle(quietMs, animations, network, timeoutMs);
+        if (waited < 0)
+            throw CommandError(ErrorCode::Timeout,
+                               QStringLiteral("UI did not become idle within %1 ms").arg(timeoutMs));
+        QVariantMap out;
+        out.insert(QStringLiteral("waited_ms"), waited);
+        return out;
+    });
+
+    // ---- widgets / models ------------------------------------------------
+    registerCommand(QStringLiteral("widget.model_data"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::modelData(object,
+                                        params.value(QStringLiteral("max_rows"), -1).toInt());
+    });
 
     // ---- input -----------------------------------------------------------
     registerCommand(QStringLiteral("input.click"), [this](const QVariantMap &params) -> QVariant {

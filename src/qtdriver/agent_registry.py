@@ -128,8 +128,10 @@ def _dll_minor_version(dll: Path) -> Optional[int]:
         if not ctypes.windll.version.VerQueryValueW(buf, "\\", ctypes.byref(value),
                                                     ctypes.byref(length)):
             return None
+        # VS_FIXEDFILEINFO: [0] signature, [1] struct version, [2] dwFileVersionMS.
+        # dwFileVersionMS packs HIWORD=major, LOWORD=minor.
         ffi = ctypes.cast(value, ctypes.POINTER(ctypes.c_uint32 * 4)).contents
-        return (ffi[2] >> 16) & 0xFFFF
+        return ffi[2] & 0xFFFF
     except Exception:  # noqa: BLE001
         return None
 

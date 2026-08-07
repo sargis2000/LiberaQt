@@ -76,8 +76,11 @@ endif()
 set_target_properties(qtdriver PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/generic"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/generic"
-  PREFIX "$<IF:$<PLATFORM_ID:Windows>,,lib>"
 )
+if(WIN32)
+  # No "lib" prefix on Windows; Qt looks for generic/qtdriver.dll.
+  set_target_properties(qtdriver PROPERTIES PREFIX "")
+endif()
 
 install(TARGETS qtdriver
   LIBRARY DESTINATION plugins/generic

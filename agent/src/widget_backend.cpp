@@ -3,7 +3,10 @@
 #include "dispatcher.h"
 #include "object_registry.h"
 #include "selector_engine.h"
+#include "value_codec.h"
 
+#include <QAbstractItemModel>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QGuiApplication>
 #include <QRect>
@@ -48,6 +51,47 @@ QVariantList WidgetBackend::listWindows(ObjectRegistry &registry)
                      QVariantList{g.x(), g.y(), g.width(), g.height()});
         out.append(entry);
     }
+    return out;
+}
+
+QVariantMap WidgetBackend::modelData(QObject *object, int maxRows)
+{
+    auto *view = qobject_cast<QAbstractItemView *>(object);
+    if (!view) {
+        throw CommandError(ErrorCode::Unsupported,
+                           QStringLiteral("%1 is not a model-backed item view")
+                               .arg(QString::fromUtf8(object->metaObject()->className())));
+    }
+    QAbstractItemModel *model = view->model();
+    if (!model)
+        throw CommandError(ErrorCode::Unsupported, QStringLiteral("the view has no model"));
+
+    const int columns = model->columnCount();
+    QStringList headers;
+    headers.reserve(columns);
+    for (int c = 0; c < columns; ++c) {
+        QString header = model->headerData(c, Qt::Horizontal, Qt::DisplayRole).toString();
+        if (header.isEmpty())
+            header = QString::number(c);
+        headers.append(header);
+    }
+
+    int rowCount = model->rowCount();
+    if (maxRows >= 0 && maxRows < rowCount)
+        rowCount = maxRows;
+
+    QVariantList rows;
+    for (int r = 0; r < rowCount; ++r) {
+        QVariantMap row;
+        for (int c = 0; c < columns; ++c)
+            row.insert(headers.at(c),
+                       ValueCodec::encode(model->data(model->index(r, c), Qt::DisplayRole)));
+        rows.append(row);
+    }
+
+    QVariantMap out;
+    out.insert(QStringLiteral("rows"), rows);
+    out.insert(QStringLiteral("headers"), QVariant(headers));
     return out;
 }
 

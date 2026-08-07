@@ -4,6 +4,9 @@ Only the selector strings differ -- the API, the waiting model and the assertion
 That is the point of splicing the Quick scene graph into the same object tree.
 """
 
+import sys
+from pathlib import Path
+
 import pytest
 
 from qtdriver import expect
@@ -12,6 +15,8 @@ from qtdriver import expect
 @pytest.fixture
 def quick_app(qtdriver, qtdriver_config):
     exe = qtdriver_config.get("quick_executable", "build/sample/sample_quick")
+    if sys.platform == "win32" and not Path(exe).exists() and Path(f"{exe}.exe").exists():
+        exe = f"{exe}.exe"
     app = qtdriver.launch(exe, headless=bool(qtdriver_config.get("headless")))
     yield app
     app.close()
