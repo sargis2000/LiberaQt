@@ -7,7 +7,6 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 from . import LiberaQt, __version__, agent_registry
 from .errors import LiberaQtError
@@ -175,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

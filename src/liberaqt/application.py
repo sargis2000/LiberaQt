@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 from .errors import LiberaQtError
 from .protocol import Cmd, Event
@@ -10,13 +10,16 @@ from .session import Session
 from .waits import retry
 from .window import Window
 
+if TYPE_CHECKING:
+    from .launcher import LaunchedProcess
+
 
 class Application:
-    def __init__(self, session: Session, process: Optional["LaunchedProcess"] = None):
+    def __init__(self, session: Session, process: LaunchedProcess | None = None):
         self._session = session
         self._process = process
         self._closed = False
-        self._events: List[dict] = []
+        self._events: list[dict] = []
         for name in (Event.WINDOW_OPENED, Event.WINDOW_CLOSED, Event.APP_MESSAGE,
                      Event.APP_ABOUT_TO_QUIT):
             session.transport.on(name, lambda data, n=name: self._events.append({n: data}))
@@ -27,7 +30,7 @@ class Application:
         return self._session.call(Cmd.INFO)
 
     @property
-    def pid(self) -> Optional[int]:
+    def pid(self) -> int | None:
         return self._process.pid if self._process else self._session.transport.hello.get("pid")
 
     @property
@@ -35,7 +38,7 @@ class Application:
         return self._session.transport.hello.get("qt", "")
 
     @property
-    def logs(self) -> List[str]:
+    def logs(self) -> list[str]:
         return list(self._process.log_lines) if self._process else []
 
     @property
@@ -46,12 +49,12 @@ class Application:
 
     # ------------------------------------------------------------------ windows
     @property
-    def windows(self) -> List[Window]:
+    def windows(self) -> list[Window]:
         entries = self._session.call(Cmd.WINDOW_LIST) or []
         return [Window(self._session, e["handle"], e) for e in entries]
 
-    def window(self, title: Optional[str] = None, index: int = 0,
-               timeout: Optional[float] = None) -> Window:
+    def window(self, title: str | None = None, index: int = 0,
+               timeout: float | None = None) -> Window:
         """Wait for and return a window. Without ``title``, returns the ``index``-th window."""
         timeout = self._session.timeouts.resolve(timeout)
 
@@ -69,12 +72,12 @@ class Application:
 
         return retry(once, timeout=timeout, description=f"window(title={title!r})")
 
-    def wait_for_window(self, title: Optional[str] = None,
-                        timeout: Optional[float] = None) -> Window:
+    def wait_for_window(self, title: str | None = None,
+                        timeout: float | None = None) -> Window:
         return self.window(title=title, timeout=timeout)
 
     # ------------------------------------------------------------------ misc
-    def screenshot(self, path: Optional[str] = None) -> bytes:
+    def screenshot(self, path: str | None = None) -> bytes:
         return self._session.grab(path=path)
 
     def wait_for_idle(self, **kwargs: Any) -> None:
@@ -83,7 +86,7 @@ class Application:
     def on(self, event: str, callback: Callable[[dict], None]) -> None:
         self._session.transport.on(event, callback)
 
-    def evaluate(self, expression: str, handle: Optional[str] = None) -> Any:
+    def evaluate(self, expression: str, handle: str | None = None) -> Any:
         return self._session.call(Cmd.QUICK_EVALUATE,
                                   {"handle": handle, "expression": expression}).get("value")
 
@@ -109,7 +112,7 @@ class Application:
             return self._process.popen.wait(timeout=5)
         return 0
 
-    def __enter__(self) -> "Application":
+    def __enter__(self) -> Application:
         return self
 
     def __exit__(self, *exc: Any) -> None:

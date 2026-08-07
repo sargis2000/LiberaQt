@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .errors import InvalidSelectorError
 
@@ -43,18 +43,18 @@ class Attr:
 
 @dataclass
 class Step:
-    type: Optional[str] = None
+    type: str | None = None
     exact_type: bool = False          # trailing '!' -> exact class, no inherits
-    object_name: Optional[str] = None
-    attrs: List[Attr] = field(default_factory=list)
-    states: List[str] = field(default_factory=list)
-    index: Optional[int] = None
-    has: Optional["Selector"] = None
-    parent: Optional["Selector"] = None
+    object_name: str | None = None
+    attrs: list[Attr] = field(default_factory=list)
+    states: list[str] = field(default_factory=list)
+    index: int | None = None
+    has: Selector | None = None
+    parent: Selector | None = None
     direct_child: bool = False        # this step must be a direct child of the previous one
 
     def to_json(self) -> dict:
-        node: Dict[str, Any] = {}
+        node: dict[str, Any] = {}
         if self.type:
             node["type"] = self.type
         if self.exact_type:
@@ -78,7 +78,7 @@ class Step:
 
 @dataclass
 class Selector:
-    steps: List[Step] = field(default_factory=list)
+    steps: list[Step] = field(default_factory=list)
     source: str = ""
 
     def to_json(self) -> dict:

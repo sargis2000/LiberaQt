@@ -12,7 +12,7 @@ import json
 import socket
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable
 
 from .errors import ConnectionLostError, ProtocolError, TimeoutError, from_agent_error
 from .protocol import PROTOCOL_VERSION
@@ -23,7 +23,7 @@ class _Pending:
 
     def __init__(self) -> None:
         self.event = threading.Event()
-        self.response: Optional[dict] = None
+        self.response: dict | None = None
 
 
 class Transport:
@@ -35,25 +35,25 @@ class Transport:
         self.port = port
         self.token = token
         self.trace = trace
-        self.hello: Dict[str, Any] = {}
-        self.history: List[dict] = []       # last N messages, attached to failure reports
+        self.hello: dict[str, Any] = {}
+        self.history: list[dict] = []       # last N messages, attached to failure reports
         self.history_limit = 200
 
-        self._sock: Optional[socket.socket] = None
+        self._sock: socket.socket | None = None
         self._ids = itertools.count(1)
-        self._pending: Dict[int, _Pending] = {}
+        self._pending: dict[int, _Pending] = {}
         self._lock = threading.Lock()
-        self._reader: Optional[threading.Thread] = None
+        self._reader: threading.Thread | None = None
         self._closed = threading.Event()
-        self._listeners: Dict[str, List[Callable[[dict], None]]] = {}
+        self._listeners: dict[str, list[Callable[[dict], None]]] = {}
         self._buffer = b""
-        self._failure: Optional[BaseException] = None
+        self._failure: BaseException | None = None
 
     # ------------------------------------------------------------------ lifecycle
 
     def connect(self, timeout: float = 10.0) -> dict:
         deadline = time.monotonic() + timeout
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         while time.monotonic() < deadline:
             try:
                 self._sock = socket.create_connection((self.host, self.port), timeout=2.0)
@@ -96,7 +96,7 @@ class Transport:
 
     # ------------------------------------------------------------------ requests
 
-    def call(self, cmd: str, params: Optional[dict] = None, timeout: float = 10.0,
+    def call(self, cmd: str, params: dict | None = None, timeout: float = 10.0,
              selector: Any = None) -> Any:
         """Send a command and block until the response arrives.
 

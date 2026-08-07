@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 HEADER = '''"""Recorded by `liberaqt record`. Review before committing:
 selectors marked TODO are position-dependent and will break on the next layout change.
@@ -19,7 +19,7 @@ def _literal(value: Any) -> str:
     return repr(value)
 
 
-def render_action(action: Dict[str, Any]) -> List[str]:
+def render_action(action: dict[str, Any]) -> list[str]:
     kind = action.get("action")
     selector = action.get("selector", "")
     brittle = action.get("brittle", False)
@@ -52,7 +52,7 @@ def render_action(action: Dict[str, Any]) -> List[str]:
     return [f"    # unhandled recorded action: {action!r}"]
 
 
-def render(actions: List[Dict[str, Any]], test_name: str = "test_recorded") -> str:
+def render(actions: list[dict[str, Any]], test_name: str = "test_recorded") -> str:
     lines = [HEADER.format(test_name=test_name)]
     if not actions or actions[0].get("action") != "window_opened":
         lines.append("    win = app.window()")

@@ -7,18 +7,21 @@ locators, which survive layout changes.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import TYPE_CHECKING
 
 from .protocol import Cmd
 
+if TYPE_CHECKING:
+    from .session import Session
+
 
 class Mouse:
-    def __init__(self, session: "Session", window_handle: Optional[str] = None):
+    def __init__(self, session: Session, window_handle: str | None = None):
         self._session = session
         self._window = window_handle
 
     def click(self, x: int, y: int, button: str = "left",
-              modifiers: Optional[List[str]] = None, count: int = 1) -> None:
+              modifiers: list[str] | None = None, count: int = 1) -> None:
         self._session.call(Cmd.CLICK, {"handle": self._window, "pos": [x, y],
                                        "button": button, "modifiers": modifiers or [],
                                        "count": count})

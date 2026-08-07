@@ -14,7 +14,6 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
 
 from .errors import AgentMismatchError
 
@@ -73,7 +72,7 @@ _QT_LIB_RE = re.compile(r"libQt(\d)(Core)\.so\.(\d+)\.(\d+)", re.I)
 _QT_DLL_RE = re.compile(r"Qt(\d)Core\.dll", re.I)
 
 
-def detect_qt_version(executable: str) -> Optional[str]:
+def detect_qt_version(executable: str) -> str | None:
     """Best-effort detection of the Qt version an executable links against.
 
     Linux: parse ``ldd`` output. Windows: scan the PE import table for ``Qt5Core.dll`` /
@@ -112,7 +111,7 @@ def detect_qt_version(executable: str) -> Optional[str]:
     return None
 
 
-def _dll_minor_version(dll: Path) -> Optional[int]:
+def _dll_minor_version(dll: Path) -> int | None:
     """Read a DLL's FileVersion minor number (Windows only). Placeholder for a PE parser."""
     try:
         import ctypes
@@ -138,7 +137,7 @@ def _dll_minor_version(dll: Path) -> Optional[int]:
 
 # ------------------------------------------------------------------ resolution
 
-def search_paths() -> List[Path]:
+def search_paths() -> list[Path]:
     paths = [cache_dir() / "agents"]
     env = os.environ.get("LIBERAQT_AGENT_PATH")
     if env:
@@ -147,8 +146,8 @@ def search_paths() -> List[Path]:
     return paths
 
 
-def installed() -> List[AgentBuild]:
-    found: List[AgentBuild] = []
+def installed() -> list[AgentBuild]:
+    found: list[AgentBuild] = []
     for base in search_paths():
         if not base.is_dir():
             continue
@@ -165,7 +164,7 @@ def installed() -> List[AgentBuild]:
     return found
 
 
-def resolve(executable: str, qt: Optional[str] = None) -> AgentBuild:
+def resolve(executable: str, qt: str | None = None) -> AgentBuild:
     """Pick the agent build for this AUT, or raise with actionable instructions."""
     wanted_qt = qt or detect_qt_version(executable)
     tag = current_platform_tag()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import time
-from typing import Callable, Optional, TypeVar
+from typing import Callable, TypeVar
 
 from .errors import LiberaQtError
 from .errors import TimeoutError as LiberaQtTimeoutError
@@ -19,7 +19,7 @@ class TimeoutPolicy:
     def __init__(self, default: float = DEFAULT_TIMEOUT):
         self.default = default
 
-    def resolve(self, timeout: Optional[float]) -> float:
+    def resolve(self, timeout: float | None) -> float:
         return self.default if timeout is None else timeout
 
     @contextlib.contextmanager
@@ -45,7 +45,7 @@ def retry(
     Always attempts at least once, so a zero timeout still does useful work.
     """
     deadline = time.monotonic() + timeout
-    last: Optional[BaseException] = None
+    last: BaseException | None = None
     attempts = 0
     while True:
         attempts += 1

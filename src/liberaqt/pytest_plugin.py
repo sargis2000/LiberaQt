@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -27,7 +27,7 @@ def pytest_addoption(parser: Any) -> None:
     group.addoption("--liberaqt-trace", action="store_true", help="log every protocol message")
 
 
-def _load_config(rootdir: Path) -> Dict[str, Any]:
+def _load_config(rootdir: Path) -> dict[str, Any]:
     path = rootdir / "liberaqt.toml"
     if not path.exists():
         return {}
@@ -43,7 +43,7 @@ def _load_config(rootdir: Path) -> Dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
-def liberaqt_config(pytestconfig: Any) -> Dict[str, Any]:
+def liberaqt_config(pytestconfig: Any) -> dict[str, Any]:
     cfg = _load_config(Path(str(pytestconfig.rootdir)))
     if pytestconfig.getoption("--liberaqt-exe"):
         cfg["executable"] = pytestconfig.getoption("--liberaqt-exe")
@@ -57,7 +57,7 @@ def liberaqt_config(pytestconfig: Any) -> Dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
-def liberaqt(pytestconfig: Any, liberaqt_config: Dict[str, Any]):
+def liberaqt(pytestconfig: Any, liberaqt_config: dict[str, Any]):
     driver = LiberaQt(
         default_timeout=float(liberaqt_config.get("timeout", 5.0)),
         slowmo=pytestconfig.getoption("--liberaqt-slowmo"),
@@ -68,7 +68,7 @@ def liberaqt(pytestconfig: Any, liberaqt_config: Dict[str, Any]):
 
 
 @pytest.fixture
-def app(liberaqt, liberaqt_config: Dict[str, Any], request: Any):
+def app(liberaqt, liberaqt_config: dict[str, Any], request: Any):
     """A fresh AUT process per test. Slower, but tests cannot leak state into each other."""
     exe = liberaqt_config.get("executable")
     if not exe:
@@ -86,7 +86,7 @@ def app(liberaqt, liberaqt_config: Dict[str, Any], request: Any):
 
 
 @pytest.fixture(scope="session")
-def app_session(liberaqt, liberaqt_config: Dict[str, Any]):
+def app_session(liberaqt, liberaqt_config: dict[str, Any]):
     """One AUT process for the whole session. Faster; use when tests are read-only."""
     exe = liberaqt_config.get("executable")
     if not exe:

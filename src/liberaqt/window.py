@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from . import selectors as sel
 from .locator import Locator, SelectorLike
 from .protocol import Cmd
 
+if TYPE_CHECKING:
+    from .keyboard import Keyboard
+    from .mouse import Mouse
+    from .session import Session
+
 
 class Window(Locator):
-    def __init__(self, session: "Session", handle: str, info: Optional[dict] = None):
+    def __init__(self, session: Session, handle: str, info: dict | None = None):
         super().__init__(session, sel.Selector(steps=[], source=f"<window {handle}>"), handle)
         self._handle = handle
         self._cached = info or {}
 
     # ------------------------------------------------------------------ identity
-    def resolve(self, timeout: Optional[float] = None) -> str:
+    def resolve(self, timeout: float | None = None) -> str:
         return self._handle
 
     def _info(self) -> dict:
@@ -56,7 +61,7 @@ class Window(Locator):
         self._session.call(Cmd.INVOKE,
                            {"handle": self._handle, "method": "move", "args": [x, y]})
 
-    def screenshot(self, path: Optional[str] = None) -> bytes:
+    def screenshot(self, path: str | None = None) -> bytes:
         return self._session.grab(handle=self._handle, path=path)
 
     # ------------------------------------------------------------------ lookup
@@ -67,16 +72,16 @@ class Window(Locator):
         """Look a selector up in the object map (see docs/SELECTORS.md section 7)."""
         return self.locator(self._session.object_map.resolve(name))
 
-    def menu(self, path: str) -> "MenuAction":
+    def menu(self, path: str) -> MenuAction:
         return MenuAction(self._session, self._handle, path)
 
     @property
-    def keyboard(self) -> "Keyboard":
+    def keyboard(self) -> Keyboard:
         from .keyboard import Keyboard
         return Keyboard(self._session, self._handle)
 
     @property
-    def mouse(self) -> "Mouse":
+    def mouse(self) -> Mouse:
         from .mouse import Mouse
         return Mouse(self._session, self._handle)
 
@@ -93,7 +98,7 @@ class Window(Locator):
 class MenuAction:
     """A menu entry addressed by slash-separated path, e.g. ``"File/Recent/foo.txt"``."""
 
-    def __init__(self, session: "Session", window_handle: str, path: str):
+    def __init__(self, session: Session, window_handle: str, path: str):
         self._session = session
         self._window = window_handle
         self._path = path

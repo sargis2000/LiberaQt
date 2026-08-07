@@ -7,7 +7,7 @@ tests do not need explicit sleeps. Failure messages carry the actual value and t
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any
 
 from .errors import LiberaQtError
 from .waits import retry
@@ -18,17 +18,17 @@ def _normalise(text: str) -> str:
 
 
 class LocatorAssertions:
-    def __init__(self, locator, timeout: Optional[float] = None, negated: bool = False):
+    def __init__(self, locator, timeout: float | None = None, negated: bool = False):
         self._loc = locator
         self._timeout = timeout
         self._negated = negated
 
     @property
-    def not_(self) -> "LocatorAssertions":
+    def not_(self) -> LocatorAssertions:
         return LocatorAssertions(self._loc, self._timeout, not self._negated)
 
     # -- engine ---------------------------------------------------------------
-    def _check(self, description: str, probe, expected=None, timeout: Optional[float] = None):
+    def _check(self, description: str, probe, expected=None, timeout: float | None = None):
         timeout = timeout if timeout is not None else (
             self._timeout if self._timeout is not None else self._loc._session.timeouts.default
         )
@@ -58,62 +58,62 @@ class LocatorAssertions:
             raise AssertionError(msg) from exc
 
     # -- assertions -----------------------------------------------------------
-    def to_be_visible(self, timeout: Optional[float] = None):
+    def to_be_visible(self, timeout: float | None = None):
         self._check("to be visible", lambda: (self._loc.is_visible, self._loc.is_visible),
                     timeout=timeout)
 
-    def to_be_hidden(self, timeout: Optional[float] = None):
+    def to_be_hidden(self, timeout: float | None = None):
         self._check("to be hidden", lambda: (not self._loc.is_visible, self._loc.is_visible),
                     timeout=timeout)
 
-    def to_be_enabled(self, timeout: Optional[float] = None):
+    def to_be_enabled(self, timeout: float | None = None):
         self._check("to be enabled", lambda: (self._loc.is_enabled, self._loc.is_enabled),
                     timeout=timeout)
 
-    def to_be_disabled(self, timeout: Optional[float] = None):
+    def to_be_disabled(self, timeout: float | None = None):
         self._check("to be disabled", lambda: (not self._loc.is_enabled, self._loc.is_enabled),
                     timeout=timeout)
 
-    def to_be_checked(self, checked: bool = True, timeout: Optional[float] = None):
+    def to_be_checked(self, checked: bool = True, timeout: float | None = None):
         self._check(f"to be checked={checked}",
                     lambda: (self._loc.is_checked == checked, self._loc.is_checked),
                     expected=checked, timeout=timeout)
 
-    def to_exist(self, timeout: Optional[float] = None):
+    def to_exist(self, timeout: float | None = None):
         self._check("to exist", lambda: (self._loc.count > 0, self._loc.count), timeout=timeout)
 
-    def to_have_text(self, expected: str, timeout: Optional[float] = None):
+    def to_have_text(self, expected: str, timeout: float | None = None):
         def probe():
             actual = self._loc.text
             return _normalise(actual) == _normalise(expected), actual
         self._check("to have text", probe, expected=expected, timeout=timeout)
 
-    def to_contain_text(self, expected: str, timeout: Optional[float] = None):
+    def to_contain_text(self, expected: str, timeout: float | None = None):
         def probe():
             actual = self._loc.text
             return _normalise(expected) in _normalise(actual), actual
         self._check("to contain text", probe, expected=expected, timeout=timeout)
 
-    def to_match_text(self, pattern: str, timeout: Optional[float] = None):
+    def to_match_text(self, pattern: str, timeout: float | None = None):
         rx = re.compile(pattern)
         def probe():
             actual = self._loc.text
             return bool(rx.search(actual or "")), actual
         self._check("to match text pattern", probe, expected=pattern, timeout=timeout)
 
-    def to_have_property(self, name: str, expected: Any, timeout: Optional[float] = None):
+    def to_have_property(self, name: str, expected: Any, timeout: float | None = None):
         def probe():
             actual = self._loc[name]
             return actual == expected, actual
         self._check(f"to have property {name}", probe, expected=expected, timeout=timeout)
 
-    def to_have_count(self, expected: int, timeout: Optional[float] = None):
+    def to_have_count(self, expected: int, timeout: float | None = None):
         def probe():
             actual = self._loc.count
             return actual == expected, actual
         self._check("to have count", probe, expected=expected, timeout=timeout)
 
-    def to_have_value(self, expected: Any, timeout: Optional[float] = None):
+    def to_have_value(self, expected: Any, timeout: float | None = None):
         def probe():
             actual = self._loc.value
             return actual == expected, actual
@@ -121,17 +121,17 @@ class LocatorAssertions:
 
 
 class WindowAssertions:
-    def __init__(self, window, timeout: Optional[float] = None):
+    def __init__(self, window, timeout: float | None = None):
         self._win = window
         self._timeout = timeout
 
-    def to_have_title(self, expected: str, timeout: Optional[float] = None):
+    def to_have_title(self, expected: str, timeout: float | None = None):
         LocatorAssertions(self._win, timeout or self._timeout)._check(
             "to have title", lambda: (self._win.title == expected, self._win.title),
             expected=expected, timeout=timeout,
         )
 
-    def to_be_active(self, timeout: Optional[float] = None):
+    def to_be_active(self, timeout: float | None = None):
         LocatorAssertions(self._win, timeout or self._timeout)._check(
             "to be active", lambda: (self._win.is_active, self._win.is_active), timeout=timeout,
         )
@@ -141,7 +141,7 @@ class _Retry(Exception):
     pass
 
 
-def expect(target, timeout: Optional[float] = None):
+def expect(target, timeout: float | None = None):
     """Entry point: ``expect(locator)`` or ``expect(window)``."""
     from .window import Window
 

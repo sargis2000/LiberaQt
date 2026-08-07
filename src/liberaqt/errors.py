@@ -6,7 +6,7 @@ the selector, the resolved handle (if any), and a one-line remediation hint.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 
 class LiberaQtError(Exception):
@@ -14,7 +14,7 @@ class LiberaQtError(Exception):
 
     hint: str = ""
 
-    def __init__(self, message: str, *, hint: str = "", data: Optional[dict] = None):
+    def __init__(self, message: str, *, hint: str = "", data: dict | None = None):
         self.data = data or {}
         if hint:
             self.hint = hint
@@ -56,7 +56,7 @@ class InvalidSelectorError(SelectorError):
 class ObjectNotFoundError(SelectorError):
     hint = "Check `liberaqt inspect` for the live object tree; near-misses are listed below."
 
-    def __init__(self, selector: Any, near_misses: Optional[list] = None, **kw: Any):
+    def __init__(self, selector: Any, near_misses: list | None = None, **kw: Any):
         msg = f"no object matched selector: {selector}"
         if near_misses:
             lines = "\n".join(f"    - {m}" for m in near_misses[:5])
@@ -69,7 +69,7 @@ class ObjectNotFoundError(SelectorError):
 class AmbiguousSelectorError(SelectorError):
     hint = "Narrow it with .filter(...), or pick one explicitly with .first / .nth(i)."
 
-    def __init__(self, selector: Any, matches: Optional[list] = None, **kw: Any):
+    def __init__(self, selector: Any, matches: list | None = None, **kw: Any):
         n = len(matches or [])
         msg = f"selector matched {n} objects, expected exactly 1: {selector}"
         if matches:
@@ -114,8 +114,9 @@ def from_agent_error(payload: dict, selector: Any = None) -> LiberaQtError:
     message = payload.get("message", "agent error")
     data = payload.get("data", {}) or {}
     cls = ERROR_CODE_MAP.get(code, LiberaQtError)
+    context = selector or data.get("context")
     if cls is ObjectNotFoundError:
-        return ObjectNotFoundError(selector or data.get("context"), data.get("near_misses"), data=data)
+        return ObjectNotFoundError(context, data.get("near_misses"), data=data)
     if cls is AmbiguousSelectorError:
-        return AmbiguousSelectorError(selector or data.get("context"), data.get("matches"), data=data)
+        return AmbiguousSelectorError(context, data.get("matches"), data=data)
     return cls(f"[{code}] {message}", data=data)

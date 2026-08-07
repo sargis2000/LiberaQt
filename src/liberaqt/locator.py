@@ -7,12 +7,16 @@ survive the UI not being ready yet, which is the single largest source of flakin
 
 from __future__ import annotations
 
-from typing import Any, Iterator, List, Optional, Union
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, Union
 
 from . import selectors as sel
 from .errors import AmbiguousSelectorError, ObjectNotFoundError
 from .protocol import Cmd, decode_value
 from .waits import retry
+
+if TYPE_CHECKING:
+    from .session import Session
 
 SelectorLike = Union[str, dict, "sel.Selector", None]
 
@@ -20,8 +24,8 @@ SelectorLike = Union[str, dict, "sel.Selector", None]
 class Locator:
     """One (or one-of-many) objects in the AUT's object tree."""
 
-    def __init__(self, session: "Session", selector: "sel.Selector",
-                 root_handle: Optional[str] = None, index: Optional[int] = None,
+    def __init__(self, session: Session, selector: sel.Selector,
+                 root_handle: str | None = None, index: int | None = None,
                  strict: bool = True):
         self._session = session
         self._selector = selector
@@ -31,21 +35,21 @@ class Locator:
 
     # ------------------------------------------------------------------ chaining
 
-    def locator(self, selector: SelectorLike = None, /, **kwargs: Any) -> "Locator":
+    def locator(self, selector: SelectorLike = None, /, **kwargs: Any) -> Locator:
         """A descendant of this locator."""
         child = sel.coerce(selector, **kwargs)
         return Locator(self._session, sel.join(self._selector, child), self._root,
                        strict=self._strict)
 
-    def child(self, selector: SelectorLike = None, /, **kwargs: Any) -> "Locator":
+    def child(self, selector: SelectorLike = None, /, **kwargs: Any) -> Locator:
         """A *direct* child of this locator."""
         child = sel.coerce(selector, **kwargs)
         child.steps[0].direct_child = True
         return Locator(self._session, sel.join(self._selector, child), self._root,
                        strict=self._strict)
 
-    def filter(self, *, has: SelectorLike = None, has_text: Optional[str] = None,
-               has_not: SelectorLike = None) -> "Locator":
+    def filter(self, *, has: SelectorLike = None, has_text: str | None = None,
+               has_not: SelectorLike = None) -> Locator:
         """Narrow the match set without an extra round trip."""
         narrowed = sel.Selector(steps=[sel.Step(**vars(s)) for s in self._selector.steps],
                                 source=self._selector.source)
@@ -58,23 +62,23 @@ class Locator:
             last.attrs.append(sel.Attr("text", "*=", has_text))
         return Locator(self._session, narrowed, self._root, self._index, self._strict)
 
-    def nth(self, index: int) -> "Locator":
+    def nth(self, index: int) -> Locator:
         return Locator(self._session, self._selector, self._root, index, strict=False)
 
     @property
-    def first(self) -> "Locator":
+    def first(self) -> Locator:
         return self.nth(0)
 
     @property
-    def last(self) -> "Locator":
+    def last(self) -> Locator:
         return self.nth(-1)
 
-    def all(self) -> List["Locator"]:
+    def all(self) -> list[Locator]:
         """Resolve now and return one locator per match."""
         handles = self._find(limit=0)
         return [_HandleLocator(self._session, self._selector, h) for h in handles]
 
-    def __iter__(self) -> Iterator["Locator"]:
+    def __iter__(self) -> Iterator[Locator]:
         return iter(self.all())
 
     @property
@@ -83,7 +87,7 @@ class Locator:
 
     # ------------------------------------------------------------------ resolution
 
-    def _find(self, limit: int = 0, allow_empty: bool = False) -> List[str]:
+    def _find(self, limit: int = 0, allow_empty: bool = False) -> list[str]:
         result = self._session.call(
             Cmd.FIND,
             {"selector": self._selector.to_json(), "root": self._root, "limit": limit},
@@ -94,7 +98,7 @@ class Locator:
             raise ObjectNotFoundError(self._selector, result.get("near_misses"))
         return handles
 
-    def resolve(self, timeout: Optional[float] = None) -> str:
+    def resolve(self, timeout: float | None = None) -> str:
         """Resolve to exactly one handle, retrying until the timeout expires."""
         timeout = self._session.timeouts.resolve(timeout)
 
@@ -109,14 +113,15 @@ class Locator:
                     ) from exc
             if len(handles) > 1 and self._strict:
                 info = self._session.call(Cmd.OBJ_INFO, {"handles": handles[:8]})
-                raise AmbiguousSelectorError(self._selector, info if isinstance(info, list) else None)
+                matches = info if isinstance(info, list) else None
+                raise AmbiguousSelectorError(self._selector, matches)
             return handles[0]
 
         return retry(once, timeout=timeout, description=f"locator {self._selector}")
 
     # ------------------------------------------------------------------ actions
 
-    def _act(self, cmd: str, params: Optional[dict] = None, timeout: Optional[float] = None,
+    def _act(self, cmd: str, params: dict | None = None, timeout: float | None = None,
              actionable: bool = True) -> Any:
         timeout = self._session.timeouts.resolve(timeout)
 
@@ -135,9 +140,9 @@ class Locator:
         self._session.wait_for_idle()
         return result
 
-    def click(self, button: str = "left", modifiers: Optional[List[str]] = None,
-              position: Optional[tuple] = None, count: int = 1,
-              timeout: Optional[float] = None) -> None:
+    def click(self, button: str = "left", modifiers: list[str] | None = None,
+              position: tuple | None = None, count: int = 1,
+              timeout: float | None = None) -> None:
         self._act(Cmd.CLICK, {"button": button, "modifiers": modifiers or [],
                               "pos": list(position) if position else None, "count": count},
                   timeout=timeout)
@@ -148,25 +153,25 @@ class Locator:
     def right_click(self, **kw: Any) -> None:
         self.click(button="right", **kw)
 
-    def hover(self, timeout: Optional[float] = None) -> None:
+    def hover(self, timeout: float | None = None) -> None:
         self._act(Cmd.HOVER, timeout=timeout)
 
-    def fill(self, text: str, timeout: Optional[float] = None) -> None:
+    def fill(self, text: str, timeout: float | None = None) -> None:
         """Clear and set text in one shot. Fast; does not emit per-key events."""
         self._act(Cmd.SET_TEXT, {"text": text}, timeout=timeout)
 
-    def type(self, text: str, delay: float = 0.0, timeout: Optional[float] = None) -> None:
+    def type(self, text: str, delay: float = 0.0, timeout: float | None = None) -> None:
         """Type character by character with real key events, for keystroke-sensitive widgets."""
         self._act(Cmd.TYPE_TEXT, {"text": text, "delay_ms": int(delay * 1000)}, timeout=timeout)
 
-    def press(self, key: str, count: int = 1, timeout: Optional[float] = None) -> None:
+    def press(self, key: str, count: int = 1, timeout: float | None = None) -> None:
         """Press a key or chord, e.g. ``"Ctrl+S"``, ``"Enter"``, ``"Alt+F4"``."""
         self._act(Cmd.KEY, {"key": key, "count": count}, timeout=timeout)
 
-    def clear(self, timeout: Optional[float] = None) -> None:
+    def clear(self, timeout: float | None = None) -> None:
         self.fill("", timeout=timeout)
 
-    def set_checked(self, checked: bool = True, timeout: Optional[float] = None) -> None:
+    def set_checked(self, checked: bool = True, timeout: float | None = None) -> None:
         if self.is_checked != checked:
             self.click(timeout=timeout)
 
@@ -176,24 +181,24 @@ class Locator:
     def uncheck(self, **kw: Any) -> None:
         self.set_checked(False, **kw)
 
-    def select_option(self, text: Optional[str] = None, index: Optional[int] = None,
-                      timeout: Optional[float] = None) -> None:
+    def select_option(self, text: str | None = None, index: int | None = None,
+                      timeout: float | None = None) -> None:
         self._act(Cmd.SELECT_ITEM, {"text": text, "index": index}, timeout=timeout)
 
-    def select_item(self, text: Optional[str] = None, row: Optional[int] = None,
-                    column: Optional[int] = None, timeout: Optional[float] = None) -> None:
+    def select_item(self, text: str | None = None, row: int | None = None,
+                    column: int | None = None, timeout: float | None = None) -> None:
         self._act(Cmd.SELECT_ITEM, {"text": text, "row": row, "column": column}, timeout=timeout)
 
-    def scroll_into_view(self, timeout: Optional[float] = None) -> None:
+    def scroll_into_view(self, timeout: float | None = None) -> None:
         self._act(Cmd.INVOKE, {"method": "__scroll_into_view", "args": []}, timeout=timeout)
 
-    def wheel(self, dx: int = 0, dy: int = 0, timeout: Optional[float] = None) -> None:
+    def wheel(self, dx: int = 0, dy: int = 0, timeout: float | None = None) -> None:
         self._act(Cmd.WHEEL, {"dx": dx, "dy": dy}, timeout=timeout)
 
-    def drag_to(self, target: "Locator", steps: int = 10, timeout: Optional[float] = None) -> None:
+    def drag_to(self, target: Locator, steps: int = 10, timeout: float | None = None) -> None:
         self._act(Cmd.DRAG, {"to_handle": target.resolve(), "steps": steps}, timeout=timeout)
 
-    def screenshot(self, path: Optional[str] = None) -> bytes:
+    def screenshot(self, path: str | None = None) -> bytes:
         return self._session.grab(handle=self.resolve(), path=path)
 
     # ------------------------------------------------------------------ state
@@ -248,7 +253,7 @@ class Locator:
                            {"handle": self.resolve(), "name": name, "value": value},
                            selector=self._selector)
 
-    def properties(self) -> List[dict]:
+    def properties(self) -> list[dict]:
         return self._session.call(Cmd.LIST_PROPERTIES, {"handle": self.resolve()})
 
     def invoke(self, method: str, *args: Any) -> Any:
@@ -266,7 +271,7 @@ class Locator:
                                selector=self._selector).get("value")
         )
 
-    def wait_for_signal(self, signal: str, timeout: Optional[float] = None) -> None:
+    def wait_for_signal(self, signal: str, timeout: float | None = None) -> None:
         timeout = self._session.timeouts.resolve(timeout)
         self._session.call(Cmd.WAIT_SIGNAL,
                            {"handle": self.resolve(), "signal": signal,
@@ -275,16 +280,16 @@ class Locator:
 
     # ------------------------------------------------------------------ item views
 
-    def to_records(self) -> List[dict]:
+    def to_records(self) -> list[dict]:
         """Read a model-backed view's contents as a list of dicts (one per row)."""
         return self._session.call(Cmd.MODEL_DATA, {"handle": self.resolve()}).get("rows", [])
 
-    def row(self, has_text: Optional[str] = None, index: Optional[int] = None) -> "Locator":
+    def row(self, has_text: str | None = None, index: int | None = None) -> Locator:
         params = {"handle": self.resolve(), "text": has_text, "row": index}
         result = self._session.call(Cmd.ITEM_RECT, params)
         return _HandleLocator(self._session, self._selector, result["handle"])
 
-    def cell(self, row: int, column: Union[int, str]) -> "Locator":
+    def cell(self, row: int, column: int | str) -> Locator:
         result = self._session.call(Cmd.ITEM_RECT,
                                     {"handle": self.resolve(), "row": row, "column": column})
         return _HandleLocator(self._session, self._selector, result["handle"])
@@ -301,11 +306,11 @@ class _HandleLocator(Locator):
     which is the honest behaviour for a snapshot.
     """
 
-    def __init__(self, session: "Session", selector: "sel.Selector", handle: str):
+    def __init__(self, session: Session, selector: sel.Selector, handle: str):
         super().__init__(session, selector)
         self._handle = handle
 
-    def resolve(self, timeout: Optional[float] = None) -> str:
+    def resolve(self, timeout: float | None = None) -> str:
         return self._handle
 
     def __repr__(self) -> str:

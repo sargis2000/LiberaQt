@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from .protocol import Cmd, Event
 
@@ -11,13 +11,13 @@ class Recorder:
     def __init__(self, app):
         self._app = app
         self._session = app._session
-        self.actions: List[Dict[str, Any]] = []
+        self.actions: list[dict[str, Any]] = []
 
     def start(self, granularity: str = "semantic") -> None:
         self._session.transport.on(Event.RECORD_ACTION, self._on_action)
         self._session.call(Cmd.RECORD_START, {"granularity": granularity})
 
-    def stop(self) -> List[Dict[str, Any]]:
+    def stop(self) -> list[dict[str, Any]]:
         self._session.call(Cmd.RECORD_STOP, {})
         return self.actions
 

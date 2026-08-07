@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from . import selectors
 from .application import Application
@@ -56,12 +56,12 @@ class LiberaQt:
         self.default_timeout = default_timeout
         self.slowmo = slowmo
         self.trace = trace
-        self._apps: List[Application] = []
+        self._apps: list[Application] = []
 
     # ------------------------------------------------------------------ launching
-    def launch(self, executable: str, args: Optional[List[str]] = None,
-               cwd: Optional[str] = None, env: Optional[Dict[str, str]] = None,
-               qt: Optional[str] = None, object_map: Optional[str] = None,
+    def launch(self, executable: str, args: list[str] | None = None,
+               cwd: str | None = None, env: dict[str, str] | None = None,
+               qt: str | None = None, object_map: str | None = None,
                timeout: float = 30.0, headless: bool = False,
                record: bool = False) -> Application:
         from .launcher import launch as _launch
@@ -80,7 +80,7 @@ class LiberaQt:
         self._apps.append(app)
         return app
 
-    def connect(self, port: int, token: str = "", object_map: Optional[str] = None) -> Application:
+    def connect(self, port: int, token: str = "", object_map: str | None = None) -> Application:
         """Attach to an agent that is already listening (see docs/INJECTION.md section 4)."""
         transport = Transport(port=port, token=token, trace=self.trace)
         transport.connect(timeout=10.0)
@@ -114,7 +114,7 @@ class LiberaQt:
                 pass
         self._apps.clear()
 
-    def __enter__(self) -> "LiberaQt":
+    def __enter__(self) -> LiberaQt:
         return self
 
     def __exit__(self, *exc: Any) -> None:

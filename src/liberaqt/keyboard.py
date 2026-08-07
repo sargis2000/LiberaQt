@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from .protocol import Cmd
 
+if TYPE_CHECKING:
+    from .session import Session
+
 
 class Keyboard:
-    def __init__(self, session: "Session", window_handle: Optional[str] = None):
+    def __init__(self, session: Session, window_handle: str | None = None):
         self._session = session
         self._window = window_handle
 

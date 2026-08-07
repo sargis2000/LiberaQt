@@ -50,7 +50,7 @@ def test_has_pseudo_nests_a_selector():
 
 
 def test_pseudo_is_not_swallowed_into_the_identifier():
-    """Regression: ':' must not be part of an identifier, or ':visible:nth(2)' parses as one name."""
+    """Regression: ':' must not be part of an identifier, or ':visible:nth(2)' is one name."""
     step = S.parse("QLineEdit:visible:nth(2)").to_json()["steps"][0]
     assert step["states"] == ["visible"]
     assert step["index"] == 2

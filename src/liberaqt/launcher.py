@@ -14,7 +14,6 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from . import agent_registry
 from .errors import LaunchError
@@ -23,7 +22,7 @@ from .protocol import STARTUP_TIMEOUT
 
 class LaunchedProcess:
     def __init__(self, popen: subprocess.Popen, port: int, token: str,
-                 log_lines: List[str], port_file: Path):
+                 log_lines: list[str], port_file: Path):
         self.popen = popen
         self.port = port
         self.token = token
@@ -53,9 +52,9 @@ class LaunchedProcess:
         return self.popen.returncode or 0
 
 
-def build_environment(agent: "agent_registry.AgentBuild", token: str, port_file: Path,
-                      base_env: Optional[Dict[str, str]] = None,
-                      record: bool = False) -> Dict[str, str]:
+def build_environment(agent: agent_registry.AgentBuild, token: str, port_file: Path,
+                      base_env: dict[str, str] | None = None,
+                      record: bool = False) -> dict[str, str]:
     env = dict(base_env or os.environ)
 
     existing = env.get("QT_PLUGIN_PATH", "")
@@ -76,8 +75,8 @@ def build_environment(agent: "agent_registry.AgentBuild", token: str, port_file:
     return env
 
 
-def launch(executable: str, args: Optional[List[str]] = None, cwd: Optional[str] = None,
-           env: Optional[Dict[str, str]] = None, qt: Optional[str] = None,
+def launch(executable: str, args: list[str] | None = None, cwd: str | None = None,
+           env: dict[str, str] | None = None, qt: str | None = None,
            timeout: float = STARTUP_TIMEOUT, headless: bool = False,
            record: bool = False) -> LaunchedProcess:
     exe = Path(executable)
@@ -102,7 +101,7 @@ def launch(executable: str, args: Optional[List[str]] = None, cwd: Optional[str]
         text=True, bufsize=1,
     )
 
-    log_lines: List[str] = []
+    log_lines: list[str] = []
     threading.Thread(target=_pump, args=(popen, log_lines), daemon=True).start()
 
     port = _await_port(popen, port_file, timeout, log_lines)
@@ -114,7 +113,7 @@ def _on_path(name: str) -> bool:
     return which(name) is not None
 
 
-def _pump(popen: subprocess.Popen, sink: List[str]) -> None:
+def _pump(popen: subprocess.Popen, sink: list[str]) -> None:
     if popen.stdout is None:
         return
     for line in popen.stdout:
@@ -124,7 +123,7 @@ def _pump(popen: subprocess.Popen, sink: List[str]) -> None:
 
 
 def _await_port(popen: subprocess.Popen, port_file: Path, timeout: float,
-                log_lines: List[str]) -> int:
+                log_lines: list[str]) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if port_file.exists():

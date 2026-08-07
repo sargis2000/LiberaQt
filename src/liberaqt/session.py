@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
-from typing import Any, Optional
+from typing import Any
 
 from .errors import LiberaQtError
 from .protocol import Cmd
@@ -19,13 +19,13 @@ from .waits import TimeoutPolicy
 class ObjectMap:
     """Symbolic name -> selector string. Loaded from YAML or a plain dict."""
 
-    def __init__(self, mapping: Optional[dict] = None):
+    def __init__(self, mapping: dict | None = None):
         self._flat = {}
         if mapping:
             self._flatten(mapping, prefix="")
 
     @classmethod
-    def load(cls, path: Optional[str]) -> "ObjectMap":
+    def load(cls, path: str | None) -> ObjectMap:
         if not path:
             return cls()
         if not os.path.exists(path):
@@ -65,7 +65,7 @@ class ObjectMap:
 
 
 class Session:
-    def __init__(self, transport: Transport, object_map: Optional[ObjectMap] = None,
+    def __init__(self, transport: Transport, object_map: ObjectMap | None = None,
                  default_timeout: float = 5.0, slowmo: float = 0.0):
         self.transport = transport
         self.object_map = object_map or ObjectMap()
@@ -73,7 +73,7 @@ class Session:
         self.slowmo = slowmo
         self.idle_options = {"quiet_ms": 50, "animations": True, "network": False}
 
-    def call(self, cmd: str, params: Optional[dict] = None, timeout: Optional[float] = None,
+    def call(self, cmd: str, params: dict | None = None, timeout: float | None = None,
              selector: Any = None) -> Any:
         if self.slowmo:
             import time
@@ -81,8 +81,8 @@ class Session:
         return self.transport.call(cmd, params, timeout=self.timeouts.resolve(timeout) + 5.0,
                                    selector=selector)
 
-    def wait_for_idle(self, quiet_ms: Optional[int] = None, animations: Optional[bool] = None,
-                      network: Optional[bool] = None, timeout: Optional[float] = None) -> None:
+    def wait_for_idle(self, quiet_ms: int | None = None, animations: bool | None = None,
+                      network: bool | None = None, timeout: float | None = None) -> None:
         opts = dict(self.idle_options)
         if quiet_ms is not None:
             opts["quiet_ms"] = quiet_ms
@@ -92,7 +92,7 @@ class Session:
             opts["network"] = network
         self.call(Cmd.WAIT_IDLE, opts, timeout=timeout)
 
-    def grab(self, handle: Optional[str] = None, path: Optional[str] = None) -> bytes:
+    def grab(self, handle: str | None = None, path: str | None = None) -> bytes:
         result = self.call(Cmd.GRAB, {"handle": handle})
         data = base64.b64decode(result.get("png", ""))
         if path:
