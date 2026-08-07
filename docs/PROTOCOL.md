@@ -103,6 +103,28 @@ debuggable without re-running under a spy.
 `{"__opaque": "QFont", "repr": "..."}` — readable but not round-trippable. Documented explicitly so
 users are never surprised by a silent lossy conversion.
 
+Incoming values are shaped to the destination type before use, because JSON cannot express the
+geometry types: `set_property` coerces against the declared property type and `invoke` against each
+parameter type, so `[x, y]` becomes a `QPoint`, `[w, h]` a `QSize`, and `[x, y, w, h]` a `QRect`.
+This is what makes geometry writable — `QWidget` exposes `size` and `pos` as properties whose
+setters are `resize()` and `move()`.
+
+#### What `object.invoke` can reach
+
+Only **slots and `Q_INVOKABLE` methods**. Everything else on a `QObject` is invisible to `moc`, so
+plain public functions such as `QWidget::resize`, `QWidget::move` and `QWidget::activateWindow`
+cannot be called however they are spelled. Signals are excluded deliberately: emitting one would
+fake an event the application never produced. A failed lookup returns `unsupported` with the
+class's invokable signatures in `data.invokable`, or `invalid_params` with `data.overloads` when
+the name exists but the argument count does not match.
+
+Operations Qt does not expose as slots are available as **synthetic methods**, named with a `__`
+prefix and handled before meta-object lookup:
+
+| Synthetic method | Effect |
+| --- | --- |
+| `__activate` | `raise()` + `activateWindow()` (or `QWindow::requestActivate`) |
+
 ### Input
 
 | Command | Params |

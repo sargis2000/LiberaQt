@@ -30,6 +30,13 @@ public:
     // Read a model-backed view's contents: {"rows": [{header: value, ...}, ...]}.
     static QVariantMap modelData(QObject *object, int maxRows = -1);
 
+    // Synthetic invoke targets, named with a "__" prefix by convention.
+    //
+    // Some operations tests need are plain public functions rather than slots, so moc never sees
+    // them and object.invoke cannot reach them however they are spelled. Rather than widen the
+    // command surface for each one, they are exposed as named operations here.
+    static QVariant synthetic(QObject *object, const QString &name, const QVariantList &args);
+
     // TODO(m1): itemRect(), selectItem(), menuTrigger(), tabSelect()
 };
 

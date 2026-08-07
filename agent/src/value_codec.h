@@ -12,6 +12,12 @@ class ValueCodec
 public:
     static QVariant encode(const QVariant &value);   // QVariant -> JSON-safe QVariant
     static QVariant decode(const QVariant &json);    // JSON-safe QVariant -> QVariant
+
+    // Shape a decoded value to a known destination type (a property's or parameter's type).
+    // JSON has no geometry types, so QPoint/QSize/QRect arrive as arrays and only become
+    // themselves once something tells us what was expected. Returns the value unchanged when
+    // no conversion applies, leaving the caller to report a precise failure.
+    static QVariant coerce(const QVariant &value, int targetTypeId);
 };
 
 } // namespace liberaqt

@@ -54,6 +54,33 @@ QVariantList WidgetBackend::listWindows(ObjectRegistry &registry)
     return out;
 }
 
+QVariant WidgetBackend::synthetic(QObject *object, const QString &name, const QVariantList &)
+{
+    QVariantMap out;
+    out.insert(QStringLiteral("value"), QVariant());
+
+    if (name == QLatin1String("__activate")) {
+        // QWidget::activateWindow and QWindow::requestActivate ask the window manager to focus
+        // the window; raise() reorders it locally. Tests generally want both.
+        if (auto *widget = qobject_cast<QWidget *>(object)) {
+            widget->raise();
+            widget->activateWindow();
+            return out;
+        }
+        if (auto *window = qobject_cast<QWindow *>(object)) {
+            window->raise();
+            window->requestActivate();
+            return out;
+        }
+        throw CommandError(ErrorCode::Unsupported,
+                           QStringLiteral("%1 is not a window, so it cannot be activated")
+                               .arg(QString::fromUtf8(object->metaObject()->className())));
+    }
+
+    throw CommandError(ErrorCode::Unsupported,
+                       QStringLiteral("unknown synthetic method '%1'").arg(name));
+}
+
 QVariantMap WidgetBackend::modelData(QObject *object, int maxRows)
 {
     auto *view = qobject_cast<QAbstractItemView *>(object);

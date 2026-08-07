@@ -87,6 +87,7 @@ Design rules for the client:
 | `server` | `QTcpServer` on `127.0.0.1`, newline-delimited JSON, one client at a time, token auth. |
 | `dispatcher` | Command table; validates params; runs handlers on the GUI thread via queued invocation. |
 | `object_registry` | Assigns stable string handles to `QObject*`; cleans up on `destroyed()`; resolves handle -> object. |
+| `meta_invoke` | Calls a slot or `Q_INVOKABLE` method by name, converting arguments and the return value. Plain public functions are invisible to moc, so it reports what *is* invokable instead of failing blankly. |
 | `selector_engine` | Walks the object tree, evaluates predicates, orders matches deterministically. |
 | `widget_backend` | QWidget specifics: geometry mapping, item views (index -> rect), menus, model data. |
 | `quick_backend` | Qt Quick specifics: `QQuickItem` tree, `mapToScene`, attached properties, QML ids, JS evaluation. |

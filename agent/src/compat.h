@@ -4,6 +4,8 @@
 #pragma once
 
 #include <QtGlobal>
+// QMetaProperty lives here; <QMetaObject> forwards to qobjectdefs.h, which only declares it.
+#include <QtCore/qmetaobject.h>
 #include <QString>
 #include <QVariant>
 #include <QRegularExpression>
@@ -41,6 +43,26 @@ inline bool isEnumeration(const QVariant &v)
     return v.metaType().flags().testFlag(QMetaType::IsEnumeration);
 #else
     return QMetaType::typeFlags(v.userType()).testFlag(QMetaType::IsEnumeration);
+#endif
+}
+
+inline int propertyTypeId(const QMetaProperty &property)
+{
+#if LIBERAQT_QT6
+    return property.metaType().id();
+#else
+    return property.userType();
+#endif
+}
+
+// Default-constructed QVariant of a given metatype id, used to hold an invoked method's
+// return value before it is encoded.
+inline QVariant variantOfType(int typeId)
+{
+#if LIBERAQT_QT6
+    return QVariant(QMetaType(typeId), nullptr);
+#else
+    return QVariant(typeId, nullptr);
 #endif
 }
 

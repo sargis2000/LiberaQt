@@ -69,6 +69,64 @@ def test_helpful_failure_message(app):
         assert "Log in" in message or "near misses" in message
 
 
+def test_invoke_calls_a_slot(app):
+    win = app.window(title="Login")
+    user = win.locator("QLineEdit#usernameField")
+    user.fill("sargis")
+    user.invoke("clear")                 # QLineEdit::clear is a slot
+    assert user.text == ""
+
+
+def test_invoke_returns_the_slots_return_value(app):
+    win = app.window(title="Login")
+    user = win.locator("QLineEdit#usernameField")
+    # QWidget::close() is a bool-returning slot; on a child widget it just hides it.
+    assert user.invoke("close") is True
+    assert not user.is_visible
+
+
+def test_invoke_passes_arguments(app):
+    win = app.window(title="Login")
+    user = win.locator("QLineEdit#usernameField")
+    user.invoke("setText", "typed via invoke")     # setText(QString) is a slot
+    assert user.text == "typed via invoke"
+
+
+def test_invoke_explains_why_a_non_slot_is_unreachable(app):
+    """QWidget::resize is a plain public function, so moc never sees it."""
+    win = app.window(title="Login")
+    with pytest.raises(Exception) as exc:          # noqa: B017 - UnsupportedOperationError
+        win.locator("QPushButton#submitButton").invoke("resize", 10, 10)
+
+    message = str(exc.value)
+    assert "no invokable method 'resize'" in message
+    assert "Q_INVOKABLE" in message, "the error should say what *is* callable"
+
+
+def test_window_geometry_is_writable(app):
+    """resize/move go through the size and pos properties, whose setters they are.
+
+    Reading back through those same properties also proves the agent coerced the JSON arrays
+    into QSize/QPoint. Position is checked via `pos` rather than `geometry`: for a top-level
+    window `pos` includes the frame and `geometry` excludes it, so they differ by the title bar.
+    """
+    win = app.window(title="Login")
+    win.resize(640, 480)
+    win.move(120, 90)
+
+    assert win["size"] == [640, 480]
+    assert win["pos"] == [120, 90]
+
+    _, _, width, height = win.geometry
+    assert (width, height) == (640, 480)
+
+
+def test_window_activate(app):
+    # Whether the window manager honours activation is its business; what matters here is that
+    # the call reaches the agent and succeeds rather than raising "unknown method".
+    app.window(title="Login").activate()
+
+
 def test_ambiguous_selector_names_the_candidates(app):
     """A selector matching several objects must say which ones, against the real agent.
 

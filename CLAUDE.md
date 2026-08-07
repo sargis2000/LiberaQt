@@ -92,6 +92,7 @@ cmake --build build/agent --parallel && cmake --install build/agent --prefix ~/.
 | `server` | `QTcpServer` on 127.0.0.1, JSON protocol, token auth, one client |
 | `dispatcher` | Command table, param validation, handler dispatch to GUI thread |
 | `object_registry` | Stable string handles for `QObject*`, cleanup on `destroyed()` |
+| `meta_invoke` | Calls slots / `Q_INVOKABLE` methods by name; diagnoses unreachable ones |
 | `selector_engine` | Walk object tree, evaluate predicates, deterministic ordering |
 | `widget_backend` | QWidget geometry, item views, menus, model data |
 | `quick_backend` | QML: `QQuickItem` tree, attached properties, JS eval |

@@ -84,6 +84,31 @@ QVariant ValueCodec::encode(const QVariant &value)
     return opaque;
 }
 
+QVariant ValueCodec::coerce(const QVariant &value, int target)
+{
+    if (target == QMetaType::UnknownType || compat::variantTypeId(value) == target)
+        return value;
+
+    // Mirror of encode(): geometry types go out as arrays, so they must come back from arrays.
+    if (compat::variantTypeId(value) == QMetaType::QVariantList) {
+        const QVariantList list = value.toList();
+        const auto at = [&list](int i) { return list.at(i).toInt(); };
+        if (target == QMetaType::QPoint && list.size() == 2)
+            return QPoint(at(0), at(1));
+        if (target == QMetaType::QSize && list.size() == 2)
+            return QSize(at(0), at(1));
+        if (target == QMetaType::QRect && list.size() == 4)
+            return QRect(at(0), at(1), at(2), at(3));
+    }
+    if (target == QMetaType::QColor && compat::variantTypeId(value) == QMetaType::QString)
+        return QColor(value.toString());
+
+    QVariant converted = value;
+    if (compat::canConvert(converted, target) && compat::convert(converted, target))
+        return converted;
+    return value;
+}
+
 QVariant ValueCodec::decode(const QVariant &json)
 {
     if (compat::variantTypeId(json) == QMetaType::QVariantMap) {

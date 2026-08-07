@@ -46,20 +46,22 @@ class Window(Locator):
 
     # ------------------------------------------------------------------ actions
     def activate(self) -> None:
-        self._session.call(Cmd.INVOKE, {"handle": self._handle, "method": "raise", "args": []})
-        self._session.call(Cmd.INVOKE,
-                           {"handle": self._handle, "method": "activateWindow", "args": []})
+        # activateWindow is a plain public function, not a slot, so it is invisible to the
+        # meta-object system; the agent exposes raise + activate together as a synthetic method.
+        self._session.call(Cmd.INVOKE, {"handle": self._handle, "method": "__activate", "args": []})
 
     def close(self) -> None:
         self._session.call(Cmd.INVOKE, {"handle": self._handle, "method": "close", "args": []})
 
     def resize(self, width: int, height: int) -> None:
-        self._session.call(Cmd.INVOKE,
-                           {"handle": self._handle, "method": "resize", "args": [width, height]})
+        # QWidget::resize is not a slot, so it is unreachable through object.invoke. It is the
+        # setter behind the `size` property, though, which is reachable. Same for move/`pos`.
+        self._session.call(Cmd.SET_PROPERTY,
+                           {"handle": self._handle, "name": "size", "value": [width, height]})
 
     def move(self, x: int, y: int) -> None:
-        self._session.call(Cmd.INVOKE,
-                           {"handle": self._handle, "method": "move", "args": [x, y]})
+        self._session.call(Cmd.SET_PROPERTY,
+                           {"handle": self._handle, "name": "pos", "value": [x, y]})
 
     def screenshot(self, path: str | None = None) -> bytes:
         return self._session.grab(handle=self._handle, path=path)

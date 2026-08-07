@@ -1,7 +1,9 @@
 #include "dispatcher.h"
 
+#include "compat.h"
 #include "idle_tracker.h"
 #include "input_synth.h"
+#include "meta_invoke.h"
 #include "object_registry.h"
 #include "screenshot.h"
 #include "selector_engine.h"
@@ -161,8 +163,17 @@ void Dispatcher::registerBuiltins()
                     [this](const QVariantMap &params) -> QVariant {
         QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
         const QString name = params.value(QStringLiteral("name")).toString();
-        const bool ok = object->setProperty(name.toUtf8().constData(),
-                                            ValueCodec::decode(params.value(QStringLiteral("value"))));
+        QVariant value = ValueCodec::decode(params.value(QStringLiteral("value")));
+
+        // Shape the value to the declared property type first, so JSON arrays can reach
+        // QSize/QPoint/QRect properties -- which is how geometry is written (QWidget exposes
+        // size and pos as properties whose setters are resize() and move()).
+        const QMetaObject *mo = object->metaObject();
+        const int index = mo->indexOfProperty(name.toUtf8().constData());
+        if (index >= 0)
+            value = ValueCodec::coerce(value, compat::propertyTypeId(mo->property(index)));
+
+        const bool ok = object->setProperty(name.toUtf8().constData(), value);
         if (!ok)
             throw CommandError(ErrorCode::Unsupported,
                                QStringLiteral("no writable property '%1' on %2")
@@ -170,7 +181,19 @@ void Dispatcher::registerBuiltins()
         return QVariantMap{};
     });
 
-    // TODO(m1): object.list_properties, object.invoke, quick.*, widget.*, record.*
+    registerCommand(QStringLiteral("object.invoke"), [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString method = params.value(QStringLiteral("method")).toString();
+        if (method.isEmpty())
+            throw CommandError(ErrorCode::InvalidParams, QStringLiteral("'method' is required"));
+        const QVariantList args = params.value(QStringLiteral("args")).toList();
+        // "__" names are operations Qt does not expose as slots; see WidgetBackend::synthetic.
+        if (method.startsWith(QLatin1String("__")))
+            return WidgetBackend::synthetic(object, method, args);
+        return MetaInvoke::call(object, method, args);
+    });
+
+    // TODO(m1): object.list_properties, quick.*, widget.*, record.*
     // Each new command needs: PROTOCOL.md entry, handler here, Python method, and a test.
 
     // ---- synchronisation -------------------------------------------------

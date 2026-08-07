@@ -28,6 +28,7 @@ set(LIBERAQT_SOURCES
   src/server.cpp
   src/dispatcher.cpp
   src/object_registry.cpp
+  src/meta_invoke.cpp
   src/selector_engine.cpp
   src/widget_backend.cpp
   src/input_synth.cpp
