@@ -1,3 +1,6 @@
+
+
+
 # LiberaQT — Selectors and the Object Map
 
 ## 1. Two equivalent forms

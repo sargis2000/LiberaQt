@@ -69,12 +69,16 @@ class ObjectNotFoundError(SelectorError):
 class AmbiguousSelectorError(SelectorError):
     hint = "Narrow it with .filter(...), or pick one explicitly with .first / .nth(i)."
 
-    def __init__(self, selector: Any, matches: list | None = None, **kw: Any):
-        n = len(matches or [])
+    def __init__(self, selector: Any, matches: list | None = None,
+                 total: int | None = None, **kw: Any):
+        # `matches` is capped for readability, so the true count has to be passed separately.
+        n = total if total is not None else len(matches or [])
         msg = f"selector matched {n} objects, expected exactly 1: {selector}"
         if matches:
             lines = "\n".join(f"    - {m}" for m in matches[:8])
             msg += f"\n  matches:\n{lines}"
+            if n > len(matches):
+                msg += f"\n    ... and {n - len(matches)} more"
         super().__init__(msg, **kw)
         self.selector = selector
         self.matches = matches or []

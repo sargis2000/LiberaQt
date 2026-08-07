@@ -4,6 +4,8 @@ Run with:
     pytest examples/tests/test_widgets.py --liberaqt-exe build/sample/sample_widgets
 """
 
+import pytest
+
 from liberaqt import expect
 
 
@@ -65,3 +67,19 @@ def test_helpful_failure_message(app):
         assert "QPushButton" in message
         # The near-miss list should point at the button that does exist.
         assert "Log in" in message or "near misses" in message
+
+
+def test_ambiguous_selector_names_the_candidates(app):
+    """A selector matching several objects must say which ones, against the real agent.
+
+    Regression: the diagnostic used to call object.info with a plural `handles` key the agent
+    does not accept, so this surfaced as "handle '' no longer refers to a live object".
+    """
+    win = app.window(title="Login")
+    with pytest.raises(Exception) as exc:          # noqa: B017 - surfaces as TimeoutError
+        win.locator("QLineEdit").click(timeout=0)
+
+    message = str(exc.value)
+    assert "matched 2 objects" in message
+    assert "usernameField" in message and "passwordField" in message
+    assert "no longer refers to a live object" not in message

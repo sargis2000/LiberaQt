@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Union
 
 from . import selectors as sel
-from .errors import AmbiguousSelectorError, ObjectNotFoundError
+from .errors import AmbiguousSelectorError, LiberaQtError, ObjectNotFoundError
 from .protocol import Cmd, decode_value
 from .waits import retry
 
@@ -112,12 +112,26 @@ class Locator:
                         f"{self._selector} :nth({self._index}) (only {len(handles)} matches)"
                     ) from exc
             if len(handles) > 1 and self._strict:
-                info = self._session.call(Cmd.OBJ_INFO, {"handles": handles[:8]})
-                matches = info if isinstance(info, list) else None
-                raise AmbiguousSelectorError(self._selector, matches)
+                raise AmbiguousSelectorError(
+                    self._selector, self._describe(handles[:8]), total=len(handles)
+                )
             return handles[0]
 
         return retry(once, timeout=timeout, description=f"locator {self._selector}")
+
+    def _describe(self, handles: list[str]) -> list[dict]:
+        """Describe candidate objects for an error message.
+
+        Never raises. A diagnostic that fails must not replace the failure it exists to explain,
+        and a handle can legitimately go stale between the find and this call.
+        """
+        described = []
+        for handle in handles:
+            try:
+                described.append(self._session.call(Cmd.OBJ_INFO, {"handle": handle}))
+            except LiberaQtError:
+                described.append({"handle": handle})
+        return described
 
     # ------------------------------------------------------------------ actions
 
