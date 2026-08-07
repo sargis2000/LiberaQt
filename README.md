@@ -65,6 +65,23 @@ win.locator("QListView:has(QLabel[text='Inbox'])")
 win.locator("QQuickWidget Button[text='Save']")      # QML, same language
 ```
 
+### Finding out what to write
+
+`liberaqt inspect ./app` launches the application and prints a selector for every object in it,
+ranked by how well it will age — objectName first, then visible text, position only as a last
+resort — with each one marked unique or ambiguous:
+
+```
+SELECTOR                        TEXT       STATUS
+QLineEdit#usernameField                    unique
+QLabel[text='User']             User       unique
+QPushButton#submitButton        Log in     unique
+QScrollBar:nth(0)                          positional (6 of this type)
+```
+
+Uniqueness is answered by the same selector engine your tests use, not guessed from the tree, so
+`unique` means it. Add `-i` to keep the app open in a REPL and try selectors against it live.
+
 For larger suites, keep selectors in an object map so a UI change is a one-line fix:
 
 ```yaml
@@ -107,7 +124,9 @@ so a red CI run is debuggable without reproducing it locally.
 ```
 liberaqt doctor [exe]        environment and ABI check
 liberaqt agents list|install manage agent binaries
-liberaqt inspect ./app -i    live object tree browser + REPL
+liberaqt inspect ./app       suggest a selector for every object, and say which are unique
+liberaqt inspect ./app -i    same, then drop into a REPL with `app` and `win` bound
+liberaqt inspect ./app --validate objects.yaml   check an object map still resolves
 liberaqt record ./app -o test_x.py
 liberaqt run tests/
 ```

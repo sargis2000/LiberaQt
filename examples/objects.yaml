@@ -1,7 +1,7 @@
 # Object map: symbolic names -> selectors.
 #
 # Keeping selectors here rather than inline means a UI change is a one-line fix instead of a
-# sweep through the whole suite. `liberaqt inspect --validate` checks every entry still resolves.
+# sweep through the whole suite. `liberaqt inspect <exe> --validate <map>` checks every entry still resolves.
 
 login:
   username: "QLineEdit#usernameField"

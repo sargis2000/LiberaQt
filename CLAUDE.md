@@ -76,7 +76,8 @@ cmake --build build/agent --parallel && cmake --install build/agent --prefix ~/.
 | `waits.py` | Retry loop, timeout management, idle detection |
 | `mouse.py` / `keyboard.py` | Low-level input for complex interactions |
 | `spy.py` / `codegen.py` | Event recording + Python test generation |
-| `cli.py` | Commands: `doctor`, `inspect`, `record`, `agents` |
+| `suggest.py` | Rank candidate selectors per object; uniqueness verified by the agent |
+| `cli.py` | Commands: `doctor`, `inspect` (+`--validate`), `record`, `agents` |
 | `pytest_plugin.py` | Fixtures, screenshot-on-failure, CLI options |
 
 **Design rules:**

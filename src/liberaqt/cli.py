@@ -84,14 +84,60 @@ def cmd_agents(args: argparse.Namespace) -> int:
     return 1
 
 
+def _validate_object_map(app, path: str) -> int:
+    """Check every entry in an object map still resolves to exactly one object."""
+    from .session import ObjectMap
+    from .suggest import resolver_for
+
+    object_map = ObjectMap.load(path)
+    windows = app.windows
+    if not windows:
+        print("no windows to validate against", file=sys.stderr)
+        return 1
+
+    failures = 0
+    for name, selector in sorted(object_map.items()):
+        # An entry is valid if it resolves uniquely in *some* window: a dialog's objects are not
+        # in the main window, and that is not an error.
+        counts = [len(resolver_for(app._session, w.resolve())(selector)) for w in windows]
+        best = max(counts) if counts else 0
+        if best == 1:
+            print(f"  ok         {name:28} {selector}")
+        elif best == 0:
+            print(f"  MISSING    {name:28} {selector}")
+            failures += 1
+        else:
+            print(f"  AMBIGUOUS  {name:28} {selector}  ({best} matches)")
+            failures += 1
+
+    total = len(list(object_map.items()))
+    print(f"\n{total - failures}/{total} entries resolve uniquely")
+    return 1 if failures else 0
+
+
 def cmd_inspect(args: argparse.Namespace) -> int:
-    """Launch the app and dump (or browse) its object tree."""
+    """Launch the app and show how to address the objects in it."""
+    from .suggest import format_table, resolver_for, suggest_all, summarize
+
     with LiberaQt(trace=args.trace) as qd:
         app = qd.launch(args.exe, args=args.app_args, qt=args.qt)
         app.wait_for_idle()
+
+        if args.validate:
+            return _validate_object_map(app, args.validate)
+
         for window in app.windows:
             print(f"=== {window!r} ===")
-            print(json.dumps(window.tree(depth=args.depth), indent=2)[:200000])
+            tree = window.tree(depth=args.depth)
+            if args.json:
+                print(json.dumps(tree, indent=2)[:200000])
+                continue
+            suggestions = suggest_all(tree, resolver_for(app._session, window.resolve()),
+                                      include_internal=args.all)
+            print(format_table(suggestions))
+            print()
+            print(summarize(suggestions))
+
         if args.interactive:
             import code
             code.interact(
@@ -150,12 +196,18 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("name")
     p.set_defaults(func=cmd_agents)
 
-    p = sub.add_parser("inspect", help="dump or browse the object tree of a running app")
+    p = sub.add_parser("inspect", help="show how to address the objects in a running app")
     p.add_argument("exe")
     p.add_argument("app_args", nargs="*", help="arguments passed to the application")
     p.add_argument("--qt")
     p.add_argument("--depth", type=int, default=-1)
-    p.add_argument("--interactive", "-i", action="store_true")
+    p.add_argument("--interactive", "-i", action="store_true",
+                   help="drop into a REPL with `app` and `win` bound")
+    p.add_argument("--json", action="store_true", help="dump the raw object tree instead")
+    p.add_argument("--all", action="store_true",
+                   help="include Qt's internal objects (qt_scrollarea_viewport and friends)")
+    p.add_argument("--validate", metavar="MAP",
+                   help="check every entry in an object map still resolves uniquely")
     p.add_argument("--trace", action="store_true")
     p.set_defaults(func=cmd_inspect)
 

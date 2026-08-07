@@ -127,6 +127,43 @@ def test_window_activate(app):
     app.window(title="Login").activate()
 
 
+def test_inspect_suggests_selectors_that_actually_work(app):
+    """The suggestions must be paste-ready, and `unique` must mean it.
+
+    The uniqueness column is the whole value of `liberaqt inspect`; a wrong one is worse than
+    none, because it moves the discovery of an ambiguous selector to a failing test later.
+    """
+    from liberaqt.suggest import resolver_for, suggest_all
+
+    win = app.window(title="Login")
+    suggestions = suggest_all(win.tree(), resolver_for(app._session, win.resolve()))
+    offered = {s.selector for s in suggestions}
+
+    assert "QLineEdit#usernameField" in offered
+    assert "QPushButton#submitButton" in offered
+    assert "QLabel[text='User']" in offered, "no objectName here, so it should fall back to text"
+
+    unique = [s for s in suggestions if s.unique]
+    assert len(unique) >= 5
+    for suggestion in unique:
+        assert win.locator(suggestion.selector).count == 1, (
+            f"{suggestion.selector} was reported unique but is not"
+        )
+
+
+def test_inspect_suggestions_are_usable_for_real_actions(app):
+    """A suggested selector should drive the app, not merely resolve."""
+    from liberaqt.suggest import resolver_for, suggest_all
+
+    win = app.window(title="Login")
+    suggestions = suggest_all(win.tree(), resolver_for(app._session, win.resolve()))
+    by_name = {s.node.get("objectName"): s.selector for s in suggestions}
+
+    win.locator(by_name["usernameField"]).fill("sargis")
+    win.locator(by_name["submitButton"]).click()
+    expect(win.locator(by_name["statusLabel"])).to_have_text("Welcome, sargis")
+
+
 def test_ambiguous_selector_names_the_candidates(app):
     """A selector matching several objects must say which ones, against the real agent.
 
