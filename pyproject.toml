@@ -52,7 +52,19 @@ line-length = 100
 target-version = "py39"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "D"]
+# D105/D107: a magic method's name is its documentation, and constructor arguments are described
+# on the class itself rather than split across two docstrings.
+ignore = ["D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Test names and their bodies are the documentation; a docstring is added only when the *reason*
+# for a test is not obvious from reading it.
+"tests/**" = ["D100", "D101", "D102", "D103", "D104"]
+"examples/**" = ["D100", "D101", "D102", "D103", "D104"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

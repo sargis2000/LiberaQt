@@ -20,10 +20,27 @@ class TimeoutPolicy:
         self.default = default
 
     def resolve(self, timeout: float | None) -> float:
+        """Pick the timeout to use for one call.
+
+        Args:
+            timeout: Explicit timeout, or ``None`` to use the default. An explicit ``0`` is
+                honoured and means "one attempt", not "use the default".
+
+        Returns:
+            Seconds to allow.
+        """
         return self.default if timeout is None else timeout
 
     @contextlib.contextmanager
     def override(self, timeout: float):
+        """Temporarily replace the default timeout.
+
+        Args:
+            timeout: Seconds to use inside the block.
+
+        Yields:
+            None.
+        """
         previous = self.default
         self.default = timeout
         try:
@@ -74,6 +91,20 @@ def wait_until(
     poll: float = POLL_INTERVAL,
     description: str = "condition",
 ) -> None:
+    """Poll a predicate until it is true.
+
+    For conditions with no value to return and no exception to interpret, where :func:`retry`
+    would be the wrong shape.
+
+    Args:
+        predicate: Called repeatedly; polling stops when it returns true.
+        timeout: Seconds to keep polling.
+        poll: Seconds between attempts.
+        description: Phrase naming the condition, used in the timeout message.
+
+    Raises:
+        TimeoutError: The predicate was still false when the timeout expired.
+    """
     deadline = time.monotonic() + timeout
     while True:
         if predicate():

@@ -59,10 +59,26 @@ def walk(node: dict | None, depth: int = 0) -> Iterator[tuple[int, dict]]:
 
 
 def quote(value: str) -> str:
+    """Quote a string for use inside a selector attribute test.
+
+    Args:
+        value: Raw text, which may contain quotes or backslashes.
+
+    Returns:
+        The value single-quoted, with backslashes and quotes escaped.
+    """
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def is_internal(node: dict) -> bool:
+    """Whether a node is one of Qt's own internal children.
+
+    Args:
+        node: A node from an ``object.tree`` dump.
+
+    Returns:
+        True for objects named ``qt_*``, which the application did not create.
+    """
     return (node.get("objectName") or "").startswith(INTERNAL_PREFIX)
 
 
@@ -99,14 +115,17 @@ class Suggestion:
 
     @property
     def unique(self) -> bool:
+        """Whether the selector identifies this object and no other."""
         return self.matches == 1 and not self.positional
 
     @property
     def text(self) -> str:
+        """The object's display text, trimmed. Empty when it has none."""
         return (self.node.get("text") or "").strip()
 
     @property
     def status(self) -> str:
+        """A short verdict for the table: unique, ambiguous, or positional."""
         if self.unique:
             return "unique"
         if self.positional:

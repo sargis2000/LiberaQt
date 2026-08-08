@@ -52,6 +52,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_agents(args: argparse.Namespace) -> int:
+    """List, install or remove agent binaries.
+
+    Args:
+        args: Parsed arguments, carrying the ``agents`` subcommand.
+
+    Returns:
+        Process exit code. ``2`` from ``install``, which is not implemented yet and instead
+        prints the commands to build an agent from source.
+    """
     if args.agents_command == "list":
         builds = agent_registry.installed()
         if not builds:
@@ -148,6 +157,17 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def cmd_record(args: argparse.Namespace) -> int:
+    """Record interaction with an application and emit it as a pytest module.
+
+    Runs until the application closes or the user interrupts, then writes the generated test to
+    ``--output`` or to stdout.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        Process exit code.
+    """
     from .spy import Recorder
 
     with LiberaQt() as qd:
@@ -172,12 +192,25 @@ def cmd_record(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """Run pytest, so a suite can be started without knowing it is pytest underneath.
+
+    Args:
+        args: Parsed arguments; everything after ``run`` is forwarded verbatim.
+
+    Returns:
+        Pytest's exit code.
+    """
     import subprocess
     cmd = [sys.executable, "-m", "pytest", *args.pytest_args]
     return subprocess.call(cmd)
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the full command line parser.
+
+    Returns:
+        A parser whose subcommands each set ``func`` to their handler.
+    """
     parser = argparse.ArgumentParser(prog="liberaqt", description=__doc__)
     parser.add_argument("--version", action="version", version=f"liberaqt {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -227,6 +260,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``liberaqt`` command.
+
+    Driver errors are printed as a one-line message rather than a traceback: a stack trace from
+    inside the tool is noise when the actual problem is a missing agent or a bad path.
+
+    Args:
+        argv: Arguments to parse. Defaults to ``sys.argv``.
+
+    Returns:
+        Process exit code. ``1`` on a driver error, ``130`` on Ctrl-C.
+    """
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

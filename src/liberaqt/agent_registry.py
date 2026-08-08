@@ -21,6 +21,14 @@ SUPPORTED_QT = ("6.7", "5.15")
 
 
 def cache_dir() -> Path:
+    """Where downloaded agent binaries live.
+
+    Honours ``LIBERAQT_CACHE``, then the platform convention: ``%LOCALAPPDATA%`` on Windows,
+    ``XDG_CACHE_HOME`` elsewhere.
+
+    Returns:
+        The cache directory, which may not exist yet.
+    """
     env = os.environ.get("LIBERAQT_CACHE")
     if env:
         return Path(env)
@@ -33,6 +41,18 @@ def cache_dir() -> Path:
 
 @dataclass
 class AgentBuild:
+    """One installed agent binary, identified by the build it is compatible with.
+
+    A Qt plugin must be built against the same Qt minor version and the same compiler and
+    standard library as its host process, so all three parts matter when choosing one.
+
+    Attributes:
+        qt: Qt minor version, e.g. ``"6.7"``.
+        platform_tag: Platform and architecture, e.g. ``"windows-x86_64"``.
+        compiler: Toolchain, e.g. ``"gcc"``, ``"msvc2022"``, ``"mingw"``.
+        root: Install prefix, containing ``plugins/generic/``.
+    """
+
     qt: str                 # "6.7"
     platform_tag: str       # "linux-x86_64" | "windows-x86_64"
     compiler: str           # "gcc" | "msvc2019" | "msvc2022"
@@ -40,14 +60,21 @@ class AgentBuild:
 
     @property
     def plugin_dir(self) -> Path:
+        """Directory to put on ``QT_PLUGIN_PATH``."""
         return self.root / "plugins"
 
     @property
     def library(self) -> Path:
+        """Full path to the plugin binary, whether or not it exists."""
         name = "liberaqt.dll" if "windows" in self.platform_tag else "libliberaqt.so"
         return self.plugin_dir / "generic" / name
 
     def exists(self) -> bool:
+        """Whether the plugin binary is actually present.
+
+        Returns:
+            True if the file exists.
+        """
         return self.library.is_file()
 
     def __str__(self) -> str:
@@ -55,6 +82,12 @@ class AgentBuild:
 
 
 def current_platform_tag() -> str:
+    """Platform tag for the machine we are running on.
+
+    Returns:
+        A tag such as ``"linux-x86_64"`` or ``"windows-x86_64"``, matching the naming used for
+        installed agent directories.
+    """
     machine = platform.machine().lower()
     machine = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
     if sys.platform.startswith("linux"):
@@ -138,6 +171,14 @@ def _dll_minor_version(dll: Path) -> int | None:
 # ------------------------------------------------------------------ resolution
 
 def search_paths() -> list[Path]:
+    """Directories to search for installed agents, highest priority first.
+
+    ``LIBERAQT_AGENT_PATH`` comes first so a locally built agent can shadow a downloaded one,
+    which is what CI uses to test the agent it just built.
+
+    Returns:
+        The directories to search, which need not exist.
+    """
     paths = [cache_dir() / "agents"]
     env = os.environ.get("LIBERAQT_AGENT_PATH")
     if env:
@@ -147,6 +188,14 @@ def search_paths() -> list[Path]:
 
 
 def installed() -> list[AgentBuild]:
+    """Find every usable agent on the search path.
+
+    Directories whose plugin binary is missing are skipped, so a half-finished install is
+    invisible rather than a confusing failure at launch time.
+
+    Returns:
+        The agent builds found, in search-path order.
+    """
     found: list[AgentBuild] = []
     for base in search_paths():
         if not base.is_dir():

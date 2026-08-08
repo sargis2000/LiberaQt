@@ -20,6 +20,17 @@ def _literal(value: Any) -> str:
 
 
 def render_action(action: dict[str, Any]) -> list[str]:
+    """Render one recorded action as Python source lines.
+
+    Unrecognised actions become a comment rather than being dropped, so a recording never
+    silently loses a step.
+
+    Args:
+        action: One action from the recorder.
+
+    Returns:
+        Source lines, already indented for a test body.
+    """
     kind = action.get("action")
     selector = action.get("selector", "")
     brittle = action.get("brittle", False)
@@ -53,6 +64,15 @@ def render_action(action: dict[str, Any]) -> list[str]:
 
 
 def render(actions: list[dict[str, Any]], test_name: str = "test_recorded") -> str:
+    """Render a whole recording as a runnable pytest module.
+
+    Args:
+        actions: Recorded actions, in order.
+        test_name: Name for the generated test function.
+
+    Returns:
+        Complete Python source, including imports and the test signature.
+    """
     lines = [HEADER.format(test_name=test_name)]
     if not actions or actions[0].get("action") != "window_opened":
         lines.append("    win = app.window()")

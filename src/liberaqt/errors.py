@@ -73,6 +73,21 @@ class InvalidSelectorError(SelectorError):
 
 
 class ObjectNotFoundError(SelectorError):
+    """Nothing matched the selector.
+
+    Carries the near misses the agent found -- objects that matched some but not all of the
+    selector -- which usually turns "not found" into a visible typo.
+
+    Args:
+        selector: The selector that matched nothing.
+        near_misses: Descriptions of the closest candidates.
+        **kw: Passed to :class:`LiberaQtError`.
+
+    Attributes:
+        selector: The selector that matched nothing.
+        near_misses: Descriptions of the closest candidates.
+    """
+
     hint = "Check `liberaqt inspect` for the live object tree; near-misses are listed below."
 
     def __init__(self, selector: Any, near_misses: list | None = None, **kw: Any):
@@ -86,6 +101,19 @@ class ObjectNotFoundError(SelectorError):
 
 
 class AmbiguousSelectorError(SelectorError):
+    """The selector matched several objects where exactly one was required.
+
+    Args:
+        selector: The selector that matched too much.
+        matches: Descriptions of the matches, capped for readability.
+        total: True number of matches, which may exceed ``len(matches)``.
+        **kw: Passed to :class:`LiberaQtError`.
+
+    Attributes:
+        selector: The selector that matched too much.
+        matches: Descriptions of the matches shown.
+    """
+
     hint = "Narrow it with .filter(...), or pick one explicitly with .first / .nth(i)."
 
     def __init__(self, selector: Any, matches: list | None = None,
@@ -104,10 +132,14 @@ class AmbiguousSelectorError(SelectorError):
 
 
 class StaleObjectError(SelectorError):
+    """The handle refers to an object that has since been destroyed."""
+
     hint = "The object was destroyed. Re-resolve the locator instead of caching handles."
 
 
 class NotActionableError(LiberaQtError):
+    """The object exists but cannot be acted on: hidden, disabled, or zero-sized."""
+
     hint = "Wait for the precondition explicitly, or check whether a modal dialog is covering it."
 
 

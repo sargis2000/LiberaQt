@@ -68,6 +68,12 @@ class Cmd:
 
 
 class Event:
+    """Events the agent pushes without being asked.
+
+    Unlike commands these arrive unsolicited, so the transport demultiplexes them away from
+    request replies and hands them to callbacks registered with :meth:`Application.on`.
+    """
+
     WINDOW_OPENED = "window.opened"
     WINDOW_CLOSED = "window.closed"
     OBJECT_DESTROYED = "object.destroyed"

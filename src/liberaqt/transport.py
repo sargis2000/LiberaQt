@@ -52,6 +52,22 @@ class Transport:
     # ------------------------------------------------------------------ lifecycle
 
     def connect(self, timeout: float = 10.0) -> dict:
+        """Connect to the agent, check protocol versions, and authenticate.
+
+        Retries the connection while the agent finishes starting up, then refuses to proceed on
+        a protocol mismatch: an agent binary left over from an older install would otherwise fail
+        later in a much more confusing way.
+
+        Args:
+            timeout: Seconds to keep trying to connect.
+
+        Returns:
+            The agent's hello payload: protocol version, Qt version, process id.
+
+        Raises:
+            ConnectionLostError: Nothing accepted a connection in time.
+            ProtocolError: The agent speaks a different protocol version.
+        """
         deadline = time.monotonic() + timeout
         last_err: Exception | None = None
         while time.monotonic() < deadline:
@@ -81,6 +97,7 @@ class Transport:
         return self.hello
 
     def close(self) -> None:
+        """Shut the socket down and stop the reader thread. Safe to call more than once."""
         self._closed.set()
         sock, self._sock = self._sock, None
         if sock is not None:
@@ -92,6 +109,7 @@ class Transport:
 
     @property
     def is_connected(self) -> bool:
+        """Whether the socket is open and has not been closed."""
         return self._sock is not None and not self._closed.is_set()
 
     # ------------------------------------------------------------------ requests
@@ -100,7 +118,22 @@ class Transport:
              selector: Any = None) -> Any:
         """Send a command and block until the response arrives.
 
-        Agent-side errors are translated into the exception hierarchy in ``errors.py``.
+        Replies are correlated by request id, so several callers can share one connection.
+
+        Args:
+            cmd: Protocol command name.
+            params: Command parameters.
+            timeout: Seconds to wait. The local wait is slightly longer than the value sent to
+                the agent, so the agent gets to report its own timeout with context first.
+            selector: Selector to attach to any error raised, for a better message.
+
+        Returns:
+            The command's result payload.
+
+        Raises:
+            ConnectionLostError: The socket is not open.
+            TimeoutError: No reply arrived, which usually means the GUI thread is blocked.
+            LiberaQtError: The agent reported an error, translated to the matching subclass.
         """
         if not self.is_connected:
             raise ConnectionLostError(
@@ -135,6 +168,14 @@ class Transport:
         return response.get("result")
 
     def on(self, event_name: str, callback: Callable[[dict], None]) -> None:
+        """Register a callback for an agent event.
+
+        Callbacks run on the reader thread, so they must not block or call back into the driver.
+
+        Args:
+            event_name: Event name; see :class:`~liberaqt.protocol.Event`.
+            callback: Called with the event's data payload.
+        """
         self._listeners.setdefault(event_name, []).append(callback)
 
     # ------------------------------------------------------------------ internals

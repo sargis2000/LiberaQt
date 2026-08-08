@@ -1,3 +1,8 @@
+
+
+
+
+
 """Selector suggestion: ranking, verification, and the fallbacks.
 
 No agent needed. Candidate generation is pure, and verification goes through a resolver callable

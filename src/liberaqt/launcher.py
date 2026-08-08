@@ -21,6 +21,15 @@ from .protocol import STARTUP_TIMEOUT
 
 
 class LaunchedProcess:
+    """A running application we started, and the details needed to talk to its agent.
+
+    Attributes:
+        popen: The underlying process.
+        port: Loopback port the agent bound.
+        token: Shared secret the agent will require.
+        log_lines: Captured stdout and stderr, trimmed as it grows.
+    """
+
     def __init__(self, popen: subprocess.Popen, port: int, token: str,
                  log_lines: list[str], port_file: Path):
         self.popen = popen
@@ -31,13 +40,23 @@ class LaunchedProcess:
 
     @property
     def pid(self) -> int:
+        """Process id."""
         return self.popen.pid
 
     @property
     def is_running(self) -> bool:
+        """Whether the process is still alive."""
         return self.popen.poll() is None
 
     def terminate(self, timeout: float = 5.0) -> int:
+        """Terminate the process, killing it if it does not go quietly.
+
+        Args:
+            timeout: Seconds to allow for a graceful exit before killing, and again after.
+
+        Returns:
+            The process exit code.
+        """
         if self.is_running:
             self.popen.terminate()
             try:
@@ -55,6 +74,23 @@ class LaunchedProcess:
 def build_environment(agent: agent_registry.AgentBuild, token: str, port_file: Path,
                       base_env: dict[str, str] | None = None,
                       record: bool = False) -> dict[str, str]:
+    """Build the child environment that makes Qt load the agent.
+
+    The whole injection mechanism is these few variables: Qt instantiates every plugin named in
+    ``QT_QPA_GENERIC_PLUGINS`` during ``QGuiApplication`` construction, and the agent stays inert
+    unless ``LIBERAQT_TOKEN`` is set. Existing values are prepended to rather than replaced, so
+    an application that needs its own plugin path keeps working.
+
+    Args:
+        agent: The agent build to load.
+        token: Per-launch secret the agent will require from clients.
+        port_file: File the agent writes its chosen port to.
+        base_env: Environment to extend. Defaults to the current one.
+        record: Whether to start the agent in recorder mode.
+
+    Returns:
+        The environment for the child process.
+    """
     env = dict(base_env or os.environ)
 
     existing = env.get("QT_PLUGIN_PATH", "")
@@ -79,6 +115,26 @@ def launch(executable: str, args: list[str] | None = None, cwd: str | None = Non
            env: dict[str, str] | None = None, qt: str | None = None,
            timeout: float = STARTUP_TIMEOUT, headless: bool = False,
            record: bool = False) -> LaunchedProcess:
+    """Start an application with the agent injected and wait for it to report its port.
+
+    Args:
+        executable: Path to the binary, or a name on ``PATH``.
+        args: Arguments for the application itself.
+        cwd: Working directory for the new process.
+        env: Base environment to extend.
+        qt: Force a Qt version instead of detecting it from the binary.
+        timeout: Seconds to wait for the agent to report its port.
+        headless: Use the offscreen QPA platform. Linux only.
+        record: Start the agent in recorder mode.
+
+    Returns:
+        The running process, with the port and token needed to connect.
+
+    Raises:
+        LaunchError: The executable is missing, exited before the agent connected, the agent
+            never reported a port, or headless was requested off Linux.
+        AgentMismatchError: No installed agent matches the application's Qt build.
+    """
     exe = Path(executable)
     if not exe.exists() and not _on_path(executable):
         raise LaunchError(f"executable not found: {executable}")

@@ -216,7 +216,12 @@ Build layout: `<prefix>/plugins/generic/liberaqt.{so,dll,dylib}`
 
 ## Coding style
 
-* Python: Ruff rules in `pyproject.toml` (line-length 100, E/F/I/UP/B checks)
+* Python: Ruff rules in `pyproject.toml` (line-length 100, E/F/I/UP/B/D checks)
+* Docstrings: Google convention, enforced by ruff's pydocstyle rules. Every public class,
+  method and function needs one; `__init__` and magic methods are exempt (D105/D107), with
+  constructor arguments documented under `Args:` on the class instead
+* Indented code samples in docstrings need a Google section header (`Example:` + `::`), or
+  D208 strips their indentation and silently corrupts them
 * C++: Qt conventions, guard Qt 5/6 in `compat.h`
 * No Qt dependency in Python client
 * All handlers on GUI thread; use `Qt::QueuedConnection` for marshalling

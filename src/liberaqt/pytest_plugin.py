@@ -16,6 +16,11 @@ from . import LiberaQt
 
 
 def pytest_addoption(parser: Any) -> None:
+    """Register the ``--liberaqt-*`` command line options.
+
+    Args:
+        parser: The pytest argument parser.
+    """
     group = parser.getgroup("liberaqt")
     group.addoption("--liberaqt-exe", default=None, help="path to the application under test")
     group.addoption("--liberaqt-qt", default=None, help="force a Qt version, e.g. 6.7")
@@ -44,6 +49,17 @@ def _load_config(rootdir: Path) -> dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def liberaqt_config(pytestconfig: Any) -> dict[str, Any]:
+    """Session-scoped configuration, merged from every source.
+
+    Precedence is command line, then ``liberaqt.toml`` in the rootdir, then the ``LIBERAQT_EXE``
+    environment variable, so CI can override a checked-in config without editing it.
+
+    Args:
+        pytestconfig: The pytest config object.
+
+    Returns:
+        The merged settings.
+    """
     cfg = _load_config(Path(str(pytestconfig.rootdir)))
     if pytestconfig.getoption("--liberaqt-exe"):
         cfg["executable"] = pytestconfig.getoption("--liberaqt-exe")
@@ -58,6 +74,15 @@ def liberaqt_config(pytestconfig: Any) -> dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def liberaqt(pytestconfig: Any, liberaqt_config: dict[str, Any]):
+    """Session-scoped driver, closed when the run ends.
+
+    Args:
+        pytestconfig: The pytest config object.
+        liberaqt_config: Merged settings from :func:`liberaqt_config`.
+
+    Yields:
+        A :class:`~liberaqt.LiberaQt` shared by every test in the session.
+    """
     driver = LiberaQt(
         default_timeout=float(liberaqt_config.get("timeout", 5.0)),
         slowmo=pytestconfig.getoption("--liberaqt-slowmo"),
@@ -102,11 +127,31 @@ def app_session(liberaqt, liberaqt_config: dict[str, Any]):
 
 @pytest.fixture
 def win(app):
+    """The application's first window, for tests that only use one.
+
+    Args:
+        app: The ``app`` fixture.
+
+    Returns:
+        The first :class:`~liberaqt.window.Window`.
+    """
     return app.window()
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_makereport(item: Any, call: Any):
+    """Record each phase's result on the test item.
+
+    The ``app`` fixture reads this during teardown to decide whether to save diagnostics, since
+    a fixture cannot otherwise tell whether its test passed.
+
+    Args:
+        item: The test item.
+        call: The phase being reported.
+
+    Yields:
+        To the next hook implementation.
+    """
     outcome = yield
     report = outcome.get_result()
     setattr(item, f"_liberaqt_report_{report.when}", report)

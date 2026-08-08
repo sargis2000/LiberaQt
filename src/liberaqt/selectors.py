@@ -33,16 +33,44 @@ _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_\.]*|\*")
 
 @dataclass
 class Attr:
+    """One attribute test inside a step, such as ``[text^='Vol']``.
+
+    Attributes:
+        key: Property or pseudo-attribute being tested, e.g. ``"text"``.
+        op: Comparison: ``=`` exact, ``*=`` contains, ``^=`` starts with, ``$=`` ends with,
+            ``~=`` matches a regular expression.
+        value: Right-hand side, always compared as a string.
+    """
+
     key: str
     op: str
     value: str
 
     def to_json(self) -> dict:
+        """Convert to the protocol's wire form.
+
+        Returns:
+            A dict with ``key``, ``op`` and ``value``.
+        """
         return {"key": self.key, "op": self.op, "value": self.value}
 
 
 @dataclass
 class Step:
+    """One segment of a selector, e.g. the ``QPushButton#ok`` in ``QDialog > QPushButton#ok``.
+
+    Attributes:
+        type: Class or QML type name. Matches subclasses too unless ``exact_type`` is set.
+        exact_type: Trailing ``!``: match this exact class, ignoring the inheritance chain.
+        object_name: Required ``objectName``, written as ``#name``.
+        attrs: Attribute tests that must all pass.
+        states: Pseudo-classes such as ``visible`` or ``enabled``.
+        index: Zero-based ``:nth(i)`` position among this step's matches.
+        has: ``:has(...)`` -- keep only objects containing a match for this.
+        parent: Preceding step this one must be a descendant of.
+        direct_child: Whether ``parent`` must be the immediate parent rather than any ancestor.
+    """
+
     type: str | None = None
     exact_type: bool = False          # trailing '!' -> exact class, no inherits
     object_name: str | None = None
@@ -54,6 +82,13 @@ class Step:
     direct_child: bool = False        # this step must be a direct child of the previous one
 
     def to_json(self) -> dict:
+        """Convert to the protocol's wire form.
+
+        Only fields that are set are emitted, keeping the wire form readable in a trace.
+
+        Returns:
+            A dict describing this step.
+        """
         node: dict[str, Any] = {}
         if self.type:
             node["type"] = self.type
@@ -78,10 +113,23 @@ class Step:
 
 @dataclass
 class Selector:
+    """A parsed selector: a chain of steps plus the text it was written as.
+
+    Attributes:
+        steps: Steps to match, outermost first.
+        source: Original selector string, kept so error messages can quote what the user wrote
+            rather than a reconstruction of it.
+    """
+
     steps: list[Step] = field(default_factory=list)
     source: str = ""
 
     def to_json(self) -> dict:
+        """Convert to the protocol's wire form.
+
+        Returns:
+            A dict with ``steps`` and ``source``.
+        """
         return {"steps": [s.to_json() for s in self.steps], "source": self.source}
 
     def __str__(self) -> str:
