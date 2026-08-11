@@ -6,6 +6,7 @@
 #include "meta_invoke.h"
 #include "object_registry.h"
 #include "screenshot.h"
+#include "signal_waiter.h"
 #include "selector_engine.h"
 #include "value_codec.h"
 #include "widget_backend.h"
@@ -14,6 +15,7 @@
 #include <memory>
 
 #include <QCoreApplication>
+#include <QTimer>
 #include <QVariantList>
 
 namespace liberaqt {
@@ -178,8 +180,10 @@ void Dispatcher::registerBuiltins()
     });
 
     registerCommand(QStringLiteral("object.info"), [this](const QVariantMap &params) -> QVariant {
-        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
-        const QVariantMap info = WidgetBackend::describe(object, m_registry);
+        const QString handle = params.value(QStringLiteral("handle")).toString();
+        QObject *object = m_registry.resolve(handle);
+        // A composite handle names a cell inside the view, so describe the cell, not the view.
+        const QVariantMap info = WidgetBackend::describeItem(object, handle, m_registry);
         if (params.value(QStringLiteral("require_actionable")).toBool()) {
             const QString why = WidgetBackend::actionabilityProblem(object);
             if (!why.isEmpty())
@@ -270,7 +274,59 @@ void Dispatcher::registerBuiltins()
         });
     });
 
+    // ---- signals ---------------------------------------------------------
+    // Asynchronous by necessity: the point is to let the application run until it emits.
+    registerAsyncCommand(QStringLiteral("sync.wait_signal"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString name = params.value(QStringLiteral("signal")).toString();
+        const int timeoutMs = params.value(QStringLiteral("timeout_ms"), 5000).toInt();
+
+        QString available;
+        const bool started = SignalWaiter::start(
+            object, name, timeoutMs,
+            [resolve, reject, name, timeoutMs](bool emitted) {
+                if (!emitted) {
+                    reject(CommandError(ErrorCode::Timeout,
+                                        QStringLiteral("'%1' was not emitted within %2 ms")
+                                            .arg(name).arg(timeoutMs)));
+                    return;
+                }
+                QVariantMap out;
+                out.insert(QStringLiteral("emitted"), true);
+                resolve(out);
+            },
+            &available);
+
+        if (!started) {
+            reject(CommandError(ErrorCode::Unsupported,
+                                QStringLiteral("%1 has no signal '%2'; it has: %3")
+                                    .arg(QString::fromUtf8(object->metaObject()->className()),
+                                         name, available)));
+        }
+    });
+
     // ---- widgets / models ------------------------------------------------
+    registerCommand(QStringLiteral("widget.item_rect"), [this](const QVariantMap &params) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::itemRect(object, params, m_registry);
+    });
+
+    registerCommand(QStringLiteral("widget.select_item"), [this](const QVariantMap &params) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::selectItem(object, params);
+    });
+
+    registerCommand(QStringLiteral("widget.tab_select"), [this](const QVariantMap &params) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::tabSelect(object, params);
+    });
+
+    registerCommand(QStringLiteral("widget.menu_trigger"), [this](const QVariantMap &params) {
+        QObject *window = m_registry.resolve(params.value(QStringLiteral("window")).toString());
+        return WidgetBackend::menuTrigger(window, params);
+    });
+
     registerCommand(QStringLiteral("widget.model_data"),
                     [this](const QVariantMap &params) -> QVariant {
         QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
@@ -296,6 +352,48 @@ void Dispatcher::registerBuiltins()
     });
 
     // ---- visual ----------------------------------------------------------
+    registerCommand(QStringLiteral("input.press"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::press(m_registry, params);
+    });
+
+    registerCommand(QStringLiteral("input.release"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::release(m_registry, params);
+    });
+
+    registerCommand(QStringLiteral("input.wheel"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::wheel(m_registry, params);
+    });
+
+    registerCommand(QStringLiteral("input.drag"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::drag(m_registry, params);
+    });
+
+    // ---- properties ------------------------------------------------------
+    registerCommand(QStringLiteral("object.list_properties"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        QVariantMap out;
+        out.insert(QStringLiteral("properties"), WidgetBackend::listProperties(object));
+        return out;
+    });
+
+    // Deliberately never an error: "does this exist?" has a false answer, not a failure.
+    registerCommand(QStringLiteral("object.exists"), [this](const QVariantMap &params) -> QVariant {
+        const QString handle = params.value(QStringLiteral("handle")).toString();
+        QVariantMap out;
+        out.insert(QStringLiteral("exists"), m_registry.resolveOrNull(handle) != nullptr);
+        return out;
+    });
+
+    registerCommand(QStringLiteral("session.set_options"),
+                    [](const QVariantMap &params) -> QVariant {
+        // Session options are advisory; unknown keys are ignored rather than rejected so that a
+        // newer client can talk to an older agent without failing outright.
+        QVariantMap out;
+        out.insert(QStringLiteral("accepted"), QVariant(params.keys()));
+        return out;
+    });
+
     registerCommand(QStringLiteral("screen.grab"), [this](const QVariantMap &params) -> QVariant {
         return Screenshot::grab(m_registry, params);
     });

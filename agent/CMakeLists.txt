@@ -35,6 +35,7 @@ set(LIBERAQT_SOURCES
   src/screenshot.cpp
   src/recorder.cpp
   src/idle_tracker.cpp
+  src/signal_waiter.cpp
   src/value_codec.cpp
 )
 

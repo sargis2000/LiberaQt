@@ -7,7 +7,16 @@
 
 #include <QAbstractItemModel>
 #include <QAbstractItemView>
+#include <QAction>
 #include <QApplication>
+#include <QComboBox>
+#include <QItemSelectionModel>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMetaObject>
+#include <QMetaProperty>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QGuiApplication>
 #include <QRect>
 #include <QPoint>
@@ -225,6 +234,437 @@ QVariantMap WidgetBackend::dumpTree(QObject *root, ObjectRegistry &registry, int
     }
     node.insert(QStringLiteral("children"), children);
     return node;
+}
+
+// ---------------------------------------------------------------- item views
+
+namespace {
+
+//: Separates a view handle from the cell coordinates appended to it.
+const QChar ItemSeparator = QLatin1Char('~');
+
+QAbstractItemView *asView(QObject *object)
+{
+    auto *view = qobject_cast<QAbstractItemView *>(object);
+    if (!view) {
+        throw CommandError(ErrorCode::Unsupported,
+                           QStringLiteral("%1 is not an item view")
+                               .arg(QString::fromUtf8(object->metaObject()->className())));
+    }
+    return view;
+}
+
+// Resolves a column given either an index or a header caption, which is how tests usually think
+// of one ("the Part Number column", not "column 17").
+int columnFor(QAbstractItemModel *model, const QVariant &column)
+{
+    if (!column.isValid() || column.isNull())
+        return 0;
+    bool numeric = false;
+    const int index = column.toInt(&numeric);
+    if (numeric)
+        return index;
+    const QString caption = column.toString();
+    for (int c = 0; c < model->columnCount(); ++c) {
+        if (model->headerData(c, Qt::Horizontal, Qt::DisplayRole).toString() == caption)
+            return c;
+    }
+    throw CommandError(ErrorCode::NotFound, QStringLiteral("no column headed '%1'").arg(caption));
+}
+
+// Depth-first search of the whole model for a cell whose display text matches.
+//
+// Recursive because a tree keeps its children under their parent index rather than in the root's
+// row count, so a flat scan sees only the top level -- which is almost never where the interesting
+// rows are. Every column is searched too: callers name a cell by what they can see, and which
+// column it happens to live in is a detail they should not have to know.
+QModelIndex searchByText(QAbstractItemModel *model, const QModelIndex &parent,
+                         const QString &wanted)
+{
+    const int rows = model->rowCount(parent);
+    const int columns = model->columnCount(parent);
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < columns; ++c) {
+            const QModelIndex index = model->index(r, c, parent);
+            if (model->data(index, Qt::DisplayRole).toString() == wanted)
+                return index;
+        }
+        // Children hang off column 0, whatever the matching column turns out to be.
+        const QModelIndex first = model->index(r, 0, parent);
+        if (model->hasChildren(first)) {
+            const QModelIndex found = searchByText(model, first, wanted);
+            if (found.isValid())
+                return found;
+        }
+    }
+    return {};
+}
+
+QModelIndex findIndex(QAbstractItemView *view, const QVariantMap &params)
+{
+    QAbstractItemModel *model = view->model();
+    if (!model)
+        throw CommandError(ErrorCode::Unsupported, QStringLiteral("the view has no model"));
+
+    const QVariant text = params.value(QStringLiteral("text"));
+    const QVariant row = params.value(QStringLiteral("row"));
+    const int column = columnFor(model, params.value(QStringLiteral("column")));
+
+    if (text.isValid() && !text.isNull()) {
+        const QString wanted = text.toString();
+        const QModelIndex found = searchByText(model, QModelIndex(), wanted);
+        if (found.isValid())
+            return found;
+        throw CommandError(ErrorCode::NotFound, QStringLiteral("no item reads '%1'").arg(wanted));
+    }
+
+    if (row.isValid() && !row.isNull()) {
+        const int r = row.toInt();
+        if (r < 0 || r >= model->rowCount()) {
+            throw CommandError(ErrorCode::NotFound,
+                               QStringLiteral("row %1 is out of range; the view has %2")
+                                   .arg(r).arg(model->rowCount()));
+        }
+        return model->index(r, column);
+    }
+
+    throw CommandError(ErrorCode::InvalidParams,
+                       QStringLiteral("give either 'text' or 'row' to identify an item"));
+}
+
+} // namespace
+
+bool WidgetBackend::splitItemHandle(const QString &handle, QString *base, QList<int> *rows,
+                                    int *column)
+{
+    const QStringList parts = handle.split(ItemSeparator);
+    if (parts.size() != 3)
+        return false;
+    if (base)
+        *base = parts.at(0);
+    if (rows) {
+        rows->clear();
+        const QStringList chain = parts.at(1).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        for (const QString &step : chain)
+            rows->append(step.toInt());
+    }
+    if (column)
+        *column = parts.at(2).toInt();
+    return true;
+}
+
+namespace {
+
+// Rebuilds the model index a composite handle names, walking the row chain from the root down.
+QModelIndex indexFromHandle(QAbstractItemView *view, const QString &handle)
+{
+    QList<int> rows;
+    int column = 0;
+    if (!WidgetBackend::splitItemHandle(handle, nullptr, &rows, &column) || rows.isEmpty())
+        return {};
+    QAbstractItemModel *model = view->model();
+    if (!model)
+        return {};
+    QModelIndex index;
+    for (int depth = 0; depth < rows.size(); ++depth) {
+        // Children hang off column 0; only the final step uses the requested column.
+        const int col = depth + 1 == rows.size() ? column : 0;
+        index = model->index(rows.at(depth), col, index);
+        if (!index.isValid())
+            return {};
+    }
+    return index;
+}
+
+// The inverse: the chain of rows from the root down to this index.
+QString rowChain(const QModelIndex &index)
+{
+    QStringList chain;
+    for (QModelIndex step = index; step.isValid(); step = step.parent())
+        chain.prepend(QString::number(step.row()));
+    return chain.join(QLatin1Char('/'));
+}
+
+} // namespace
+
+QVariantMap WidgetBackend::itemRect(QObject *object, const QVariantMap &params,
+                                    ObjectRegistry &registry)
+{
+    QAbstractItemView *view = asView(object);
+    const QModelIndex index = findIndex(view, params);
+
+    // Scrolling first is not optional: visualRect() of an off-screen row is empty, so a click
+    // computed from it would land on whatever happens to occupy that corner of the viewport.
+    view->scrollTo(index, QAbstractItemView::EnsureVisible);
+    const QRect rect = view->visualRect(index);
+
+    QVariantMap out;
+    out.insert(QStringLiteral("handle"),
+               registry.handleFor(view) + ItemSeparator + rowChain(index)
+                   + ItemSeparator + QString::number(index.column()));
+    out.insert(QStringLiteral("row"), index.row());
+    out.insert(QStringLiteral("column"), index.column());
+    out.insert(QStringLiteral("text"), index.data(Qt::DisplayRole).toString());
+    out.insert(QStringLiteral("rect"),
+               QVariantList{rect.x(), rect.y(), rect.width(), rect.height()});
+    return out;
+}
+
+bool WidgetBackend::interactionPointFor(QObject *object, const QString &handle, QPoint *out)
+{
+    auto *view = qobject_cast<QAbstractItemView *>(object);
+    if (view) {
+        const QModelIndex index = indexFromHandle(view, handle);
+        if (index.isValid()) {
+            view->scrollTo(index, QAbstractItemView::EnsureVisible);
+            const QRect rect = view->visualRect(index);
+            if (rect.isValid()) {
+                // Mapped out of the viewport, because that is the widget events are sent to.
+                *out = view->viewport()->mapTo(view, rect.center());
+                return true;
+            }
+        }
+    }
+    return interactionPoint(object, out);
+}
+
+QVariantMap WidgetBackend::describeItem(QObject *object, const QString &handle,
+                                        ObjectRegistry &registry)
+{
+    auto *view = qobject_cast<QAbstractItemView *>(object);
+    if (!view)
+        return describe(object, registry);
+    const QModelIndex index = indexFromHandle(view, handle);
+    if (!index.isValid())
+        return describe(object, registry);
+
+    view->scrollTo(index, QAbstractItemView::EnsureVisible);
+    const QRect rect = view->visualRect(index);
+
+    QVariantMap info;
+    info.insert(QStringLiteral("handle"), handle);
+    info.insert(QStringLiteral("class"), QString::fromUtf8(view->metaObject()->className()));
+    info.insert(QStringLiteral("objectName"), view->objectName());
+    info.insert(QStringLiteral("text"), index.data(Qt::DisplayRole).toString());
+    info.insert(QStringLiteral("row"), index.row());
+    info.insert(QStringLiteral("column"), index.column());
+    info.insert(QStringLiteral("geometry"),
+                QVariantList{rect.x(), rect.y(), rect.width(), rect.height()});
+    // A cell counts as visible only when the view is showing and the cell is inside the viewport.
+    info.insert(QStringLiteral("visible"),
+                view->isVisible() && view->viewport()->rect().intersects(rect));
+    info.insert(QStringLiteral("enabled"),
+                view->isEnabled() && index.flags().testFlag(Qt::ItemIsEnabled));
+    const QVariant check = index.data(Qt::CheckStateRole);
+    if (check.isValid())
+        info.insert(QStringLiteral("checked"), check.toInt() == Qt::Checked);
+    return info;
+}
+
+QVariantMap WidgetBackend::selectItem(QObject *object, const QVariantMap &params)
+{
+    // A combo box is not an item view -- the view lives in its popup, which only exists while the
+    // popup is open. Setting the current entry directly is both simpler and more reliable than
+    // opening the popup to click inside it.
+    if (auto *combo = qobject_cast<QComboBox *>(object)) {
+        const QVariant text = params.value(QStringLiteral("text"));
+        int target = -1;
+        if (text.isValid() && !text.isNull()) {
+            target = combo->findText(text.toString());
+            if (target < 0) {
+                QStringList available;
+                for (int i = 0; i < combo->count(); ++i)
+                    available.append(combo->itemText(i));
+                throw CommandError(ErrorCode::NotFound,
+                                   QStringLiteral("no entry '%1'; there is: %2")
+                                       .arg(text.toString(),
+                                            available.join(QStringLiteral(", "))));
+            }
+        } else {
+            const QVariant index = params.value(QStringLiteral("index"));
+            target = index.isValid() && !index.isNull()
+                         ? index.toInt()
+                         : params.value(QStringLiteral("row"), -1).toInt();
+            if (target < 0 || target >= combo->count()) {
+                throw CommandError(ErrorCode::NotFound,
+                                   QStringLiteral("entry %1 is out of range; there are %2")
+                                       .arg(target).arg(combo->count()));
+            }
+        }
+        combo->setCurrentIndex(target);
+        QVariantMap out;
+        out.insert(QStringLiteral("index"), target);
+        out.insert(QStringLiteral("text"), combo->currentText());
+        return out;
+    }
+
+    QAbstractItemView *view = asView(object);
+    const QModelIndex index = findIndex(view, params);
+    if (!index.flags().testFlag(Qt::ItemIsEnabled)) {
+        throw CommandError(ErrorCode::NotActionable,
+                           QStringLiteral("the item at row %1 is disabled").arg(index.row()));
+    }
+
+    view->scrollTo(index, QAbstractItemView::EnsureVisible);
+    view->setCurrentIndex(index);
+    if (QItemSelectionModel *selection = view->selectionModel())
+        selection->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+
+    QVariantMap out;
+    out.insert(QStringLiteral("row"), index.row());
+    out.insert(QStringLiteral("column"), index.column());
+    out.insert(QStringLiteral("text"), index.data(Qt::DisplayRole).toString());
+    return out;
+}
+
+QVariantMap WidgetBackend::tabSelect(QObject *object, const QVariantMap &params)
+{
+    // Either half of the pair is accepted: tests say "the tab widget", but the tabs live on its
+    // bar, and which one a selector lands on is an implementation detail of the application.
+    auto *bar = qobject_cast<QTabBar *>(object);
+    auto *tabs = qobject_cast<QTabWidget *>(object);
+    if (!bar && !tabs) {
+        throw CommandError(ErrorCode::Unsupported,
+                           QStringLiteral("%1 is neither a QTabWidget nor a QTabBar")
+                               .arg(QString::fromUtf8(object->metaObject()->className())));
+    }
+    const int count = bar ? bar->count() : tabs->count();
+
+    const QVariant text = params.value(QStringLiteral("text"));
+    int target = -1;
+    if (text.isValid() && !text.isNull()) {
+        const QString wanted = text.toString();
+        for (int i = 0; i < count; ++i) {
+            QString label = bar ? bar->tabText(i) : tabs->tabText(i);
+            // Tab captions carry '&' accelerators that the user never sees.
+            if (label.remove(QLatin1Char('&')) == wanted) {
+                target = i;
+                break;
+            }
+        }
+        if (target < 0)
+            throw CommandError(ErrorCode::NotFound,
+                               QStringLiteral("no tab labelled '%1'").arg(wanted));
+    } else {
+        target = params.value(QStringLiteral("index"), -1).toInt();
+        if (target < 0 || target >= count) {
+            throw CommandError(ErrorCode::NotFound,
+                               QStringLiteral("tab %1 is out of range; there are %2")
+                                   .arg(target).arg(count));
+        }
+    }
+
+    if (bar)
+        bar->setCurrentIndex(target);
+    else
+        tabs->setCurrentIndex(target);
+
+    QVariantMap out;
+    out.insert(QStringLiteral("index"), target);
+    return out;
+}
+
+// ---------------------------------------------------------------- menus
+
+QVariantMap WidgetBackend::menuTrigger(QObject *window, const QVariantMap &params)
+{
+    auto *widget = qobject_cast<QWidget *>(window);
+    if (!widget) {
+        throw CommandError(ErrorCode::Unsupported,
+                           QStringLiteral("menus are addressed from a widget window"));
+    }
+    QMenuBar *bar = widget->findChild<QMenuBar *>();
+    if (!bar)
+        throw CommandError(ErrorCode::NotFound, QStringLiteral("the window has no menu bar"));
+
+    const QStringList path = params.value(QStringLiteral("path")).toString()
+                                 .split(QLatin1Char('>'), Qt::SkipEmptyParts);
+    if (path.isEmpty())
+        throw CommandError(ErrorCode::InvalidParams, QStringLiteral("'path' is required"));
+
+    QList<QAction *> actions = bar->actions();
+    QAction *found = nullptr;
+    QStringList walked;
+
+    for (int depth = 0; depth < path.size(); ++depth) {
+        const QString wanted = path.at(depth).trimmed();
+        found = nullptr;
+        for (QAction *action : actions) {
+            QString label = action->text();
+            if (label.remove(QLatin1Char('&')) == wanted) {
+                found = action;
+                break;
+            }
+        }
+        if (!found) {
+            // Listing the alternatives turns "not found" into something the reader can act on.
+            QStringList available;
+            for (QAction *action : actions) {
+                QString label = action->text();
+                label.remove(QLatin1Char('&'));
+                if (!label.isEmpty())
+                    available.append(label);
+            }
+            throw CommandError(ErrorCode::NotFound,
+                               QStringLiteral("no menu entry '%1' under %2; there is: %3")
+                                   .arg(wanted,
+                                        walked.isEmpty() ? QStringLiteral("the menu bar")
+                                                         : walked.join(QStringLiteral(" > ")),
+                                        available.join(QStringLiteral(", "))));
+        }
+        walked.append(wanted);
+        if (depth + 1 < path.size()) {
+            QMenu *submenu = found->menu();
+            if (!submenu) {
+                throw CommandError(ErrorCode::Unsupported,
+                                   QStringLiteral("'%1' is not a submenu").arg(wanted));
+            }
+            actions = submenu->actions();
+        }
+    }
+
+    QVariantMap out;
+    out.insert(QStringLiteral("enabled"), found->isEnabled());
+    out.insert(QStringLiteral("checked"), found->isChecked());
+    QString label = found->text();
+    out.insert(QStringLiteral("text"), label.remove(QLatin1Char('&')));
+    if (params.value(QStringLiteral("probe")).toBool())
+        return out;
+
+    if (!found->isEnabled()) {
+        throw CommandError(ErrorCode::NotActionable,
+                           QStringLiteral("the menu entry '%1' is disabled")
+                               .arg(walked.join(QStringLiteral(" > "))));
+    }
+    // Queued for the same reason object.invoke offers it: a menu entry very often opens a modal
+    // dialog, and a direct trigger would not return until that dialog was dismissed.
+    QMetaObject::invokeMethod(found, "trigger", Qt::QueuedConnection);
+    out.insert(QStringLiteral("queued"), true);
+    return out;
+}
+
+QVariantList WidgetBackend::listProperties(QObject *object)
+{
+    const QMetaObject *meta = object->metaObject();
+    QVariantList out;
+    for (int i = 0; i < meta->propertyCount(); ++i) {
+        const QMetaProperty property = meta->property(i);
+        QVariantMap entry;
+        entry.insert(QStringLiteral("name"), QString::fromUtf8(property.name()));
+        entry.insert(QStringLiteral("type"), QString::fromUtf8(property.typeName()));
+        entry.insert(QStringLiteral("writable"), property.isWritable());
+        entry.insert(QStringLiteral("readable"), property.isReadable());
+        // Which class introduced it, so a custom widget's own handful of properties can be told
+        // apart from the sixty it inherits from QWidget.
+        const QMetaObject *owner = meta;
+        while (owner->superClass() && i < owner->propertyOffset())
+            owner = owner->superClass();
+        entry.insert(QStringLiteral("declared_in"), QString::fromUtf8(owner->className()));
+        if (property.isReadable())
+            entry.insert(QStringLiteral("value"), ValueCodec::encode(property.read(object)));
+        out.append(entry);
+    }
+    return out;
 }
 
 } // namespace liberaqt

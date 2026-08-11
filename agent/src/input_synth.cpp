@@ -4,11 +4,13 @@
 #include "object_registry.h"
 #include "widget_backend.h"
 
+#include <QAbstractScrollArea>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMouseEvent>
 #include <QPoint>
+#include <QWheelEvent>
 #include <QWidget>
 #include <QWindow>
 
@@ -55,11 +57,44 @@ QWidget *targetWidget(ObjectRegistry &registry, const QVariantMap &params, QPoin
     if (pos.isValid() && !pos.isNull()) {
         const QVariantList xy = pos.toList();
         *point = QPoint(xy.value(0).toInt(), xy.value(1).toInt());
-    } else if (!WidgetBackend::interactionPoint(widget, point)) {
+    } else if (!WidgetBackend::interactionPointFor(
+                   widget, params.value(QStringLiteral("handle")).toString(), point)) {
         throw CommandError(ErrorCode::NotActionable,
                            QStringLiteral("cannot compute an interaction point"));
     }
     return widget;
+}
+
+// Shared by key(), press() and release(): a single chord out of a key sequence.
+void parseChord(const QString &spec, int *keyCode, Qt::KeyboardModifiers *mods)
+{
+    const QKeySequence sequence(spec);
+    if (sequence.isEmpty()) {
+        throw CommandError(ErrorCode::InvalidParams,
+                           QStringLiteral("cannot parse key sequence '%1'").arg(spec));
+    }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const QKeyCombination combo = sequence[0];
+    *keyCode = combo.key();
+    *mods = combo.keyboardModifiers();
+#else
+    const int raw = sequence[0];
+    *keyCode = raw & ~Qt::KeyboardModifierMask;
+    *mods = Qt::KeyboardModifiers(raw & Qt::KeyboardModifierMask);
+#endif
+}
+
+QWidget *keyTarget(ObjectRegistry &registry, const QVariantMap &params)
+{
+    QObject *object = registry.resolveOrNull(params.value(QStringLiteral("handle")).toString());
+    QWidget *target = qobject_cast<QWidget *>(object);
+    if (!target)
+        target = QApplication::focusWidget();
+    if (!target) {
+        throw CommandError(ErrorCode::NotActionable,
+                           QStringLiteral("no focused widget to receive the key"));
+    }
+    return target;
 }
 
 } // namespace
@@ -182,6 +217,108 @@ QVariantMap InputSynth::setText(ObjectRegistry &registry, const QVariantMap &par
     throw CommandError(ErrorCode::Unsupported,
                        QStringLiteral("%1 has no writable text property")
                            .arg(QString::fromUtf8(object->metaObject()->className())));
+}
+
+QVariantMap InputSynth::press(ObjectRegistry &registry, const QVariantMap &params)
+{
+    int keyCode = 0;
+    Qt::KeyboardModifiers mods;
+    parseChord(params.value(QStringLiteral("key")).toString(), &keyCode, &mods);
+    QWidget *target = keyTarget(registry, params);
+    QKeyEvent event(QEvent::KeyPress, keyCode, mods);
+    QApplication::sendEvent(target, &event);
+    return {};
+}
+
+QVariantMap InputSynth::release(ObjectRegistry &registry, const QVariantMap &params)
+{
+    int keyCode = 0;
+    Qt::KeyboardModifiers mods;
+    parseChord(params.value(QStringLiteral("key")).toString(), &keyCode, &mods);
+    QWidget *target = keyTarget(registry, params);
+    QKeyEvent event(QEvent::KeyRelease, keyCode, mods);
+    QApplication::sendEvent(target, &event);
+    return {};
+}
+
+QVariantMap InputSynth::wheel(ObjectRegistry &registry, const QVariantMap &params)
+{
+    QPoint point;
+    QWidget *widget = targetWidget(registry, params, &point);
+
+    // One "step" is a notch of a real wheel, which Qt defines as 120 eighths of a degree. Positive
+    // dy scrolls down, matching how a caller thinks about it, so the angle delta is negated.
+    const int dx = params.value(QStringLiteral("dx"), 0).toInt();
+    const int dy = params.value(QStringLiteral("dy"), 0).toInt();
+    const QPoint angle(dx * -120, dy * -120);
+    const QPoint pixels(dx * -20, dy * -20);
+
+    // The viewport is the widget that actually scrolls; sending to the view itself is ignored by
+    // QAbstractScrollArea.
+    QWidget *target = widget;
+    if (auto *area = qobject_cast<QAbstractScrollArea *>(widget)) {
+        target = area->viewport();
+        point = area->viewport()->rect().center();
+    }
+    const QPointF local(point);
+    const QPointF global(target->mapToGlobal(point));
+
+    QWheelEvent event(local, global, pixels, angle, Qt::NoButton,
+                      parseModifiers(params.value(QStringLiteral("modifiers")).toList()),
+                      Qt::NoScrollPhase, false);
+    QApplication::sendEvent(target, &event);
+
+    QVariantMap out;
+    out.insert(QStringLiteral("pos"), QVariantList{point.x(), point.y()});
+    return out;
+}
+
+QVariantMap InputSynth::drag(ObjectRegistry &registry, const QVariantMap &params)
+{
+    QPoint from;
+    QWidget *source = targetWidget(registry, params, &from);
+
+    const QString toHandle = params.value(QStringLiteral("to_handle")).toString();
+    QObject *targetObject = registry.resolve(toHandle);
+    auto *target = qobject_cast<QWidget *>(targetObject);
+    if (!target) {
+        throw CommandError(ErrorCode::Unsupported,
+                           QStringLiteral("the drop target is not a widget"));
+    }
+    QPoint to;
+    if (!WidgetBackend::interactionPointFor(target, toHandle, &to)) {
+        throw CommandError(ErrorCode::NotActionable,
+                           QStringLiteral("cannot compute a point on the drop target"));
+    }
+
+    const int steps = qMax(1, params.value(QStringLiteral("steps"), 10).toInt());
+    const QPoint globalFrom = source->mapToGlobal(from);
+    const QPoint globalTo = target->mapToGlobal(to);
+
+    QMouseEvent press(QEvent::MouseButtonPress, from, globalFrom,
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(source, &press);
+
+    // Intermediate moves are what make this a drag rather than a teleport: widgets commonly wait
+    // for QApplication::startDragDistance before they treat the gesture as one at all.
+    for (int i = 1; i <= steps; ++i) {
+        const QPoint global = globalFrom + (globalTo - globalFrom) * i / steps;
+        QWidget *under = QApplication::widgetAt(global);
+        QWidget *receiver = under ? under : source;
+        const QPoint local = receiver->mapFromGlobal(global);
+        QMouseEvent move(QEvent::MouseMove, local, global,
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(receiver, &move);
+    }
+
+    QMouseEvent release(QEvent::MouseButtonRelease, to, globalTo,
+                        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &release);
+
+    QVariantMap out;
+    out.insert(QStringLiteral("from"), QVariantList{globalFrom.x(), globalFrom.y()});
+    out.insert(QStringLiteral("to"), QVariantList{globalTo.x(), globalTo.y()});
+    return out;
 }
 
 } // namespace liberaqt

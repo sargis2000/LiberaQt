@@ -80,8 +80,18 @@ def test_a_method_the_meta_object_cannot_see_fails_clearly(qdbusviewer):
     assert "invokable" in str(exc.value)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="object.list_properties is not registered in dispatcher.cpp")
 def test_enumerating_what_a_custom_class_exposes(qdbusviewer):
-    """Facing someone else's class, enumeration is what you actually want. Gap #3."""
-    assert log_viewer(qdbusviewer).properties()
+    """Facing someone else's class, enumeration is what you actually want.
+
+    ``declared_in`` is the part that makes this usable: a QTextBrowser subclass inherits some
+    eighty properties, and the handful the class introduced itself are the interesting ones.
+    """
+    result = log_viewer(qdbusviewer).properties()
+    properties = result["properties"] if isinstance(result, dict) else result
+    by_name = {p["name"]: p for p in properties}
+
+    assert len(properties) > 50
+    assert by_name["objectName"]["writable"] is True
+    assert by_name["readOnly"]["type"] == "bool"
+    # Every entry says which class introduced it, so a custom widget's own additions stand out.
+    assert {p["declared_in"] for p in properties} > {"QWidget"}

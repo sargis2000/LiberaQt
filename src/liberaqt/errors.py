@@ -90,8 +90,9 @@ class ObjectNotFoundError(SelectorError):
 
     hint = "Check `liberaqt inspect` for the live object tree; near-misses are listed below."
 
-    def __init__(self, selector: Any, near_misses: list | None = None, **kw: Any):
-        msg = f"no object matched selector: {selector}"
+    def __init__(self, selector: Any, near_misses: list | None = None,
+                 message: str | None = None, **kw: Any):
+        msg = message or f"no object matched selector: {selector}"
         if near_misses:
             lines = "\n".join(f"    - {m}" for m in near_misses[:5])
             msg += f"\n  near misses:\n{lines}"
@@ -172,8 +173,14 @@ def from_agent_error(payload: dict, selector: Any = None) -> LiberaQtError:
     data = payload.get("data", {}) or {}
     cls = ERROR_CODE_MAP.get(code, LiberaQtError)
     context = selector or data.get("context")
+    # Only rebuild the selector-shaped messages when there really is a selector. `not_found` also
+    # covers lookups that have nothing to do with the object tree -- a menu entry, a tab, a row --
+    # and for those the agent's own message is the whole diagnosis and must not be thrown away.
     if cls is ObjectNotFoundError:
+        if context is None:
+            return ObjectNotFoundError(None, data.get("near_misses"),
+                                       message=f"[{code}] {message}", data=data)
         return ObjectNotFoundError(context, data.get("near_misses"), data=data)
-    if cls is AmbiguousSelectorError:
+    if cls is AmbiguousSelectorError and context is not None:
         return AmbiguousSelectorError(context, data.get("matches"), data=data)
     return cls(f"[{code}] {message}", data=data)

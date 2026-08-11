@@ -385,6 +385,26 @@ class Locator:
         """
         self._act(Cmd.SELECT_ITEM, {"text": text, "row": row, "column": column}, timeout=timeout)
 
+    def select_tab(self, text: str | None = None, index: int | None = None,
+                   timeout: float | None = None) -> None:
+        """Switch a tab widget to one of its tabs.
+
+        Works on either the ``QTabWidget`` or its ``QTabBar``, since which one a selector lands on
+        is an implementation detail of the application. Tab captions are matched with any ``&``
+        accelerator removed, so the text is what the user actually sees.
+
+        Args:
+            text: Tab caption to switch to.
+            index: Zero-based tab position, as an alternative to ``text``.
+            timeout: Seconds to wait for the object to become actionable.
+
+        Example:
+            ::
+
+                win.locator("QTabWidget").select_tab("Services")
+        """
+        self._act(Cmd.TAB_SELECT, {"text": text, "index": index}, timeout=timeout)
+
     def scroll_into_view(self, timeout: float | None = None) -> None:
         """Scroll ancestors until the object is visible.
 

@@ -32,7 +32,12 @@ QObject *ObjectRegistry::resolveOrNull(const QString &handle) const
 {
     if (handle.isEmpty())
         return nullptr;
-    const auto it = m_byHandle.constFind(handle);
+    // A cell inside an item view is not a QObject, so widget.item_rect hands out a composite
+    // handle, "<view>~<row>~<column>". Everything resolves to the view; only the commands that
+    // care about position look at the suffix, which keeps every other command working unchanged.
+    const int separator = handle.indexOf(QLatin1Char('~'));
+    const QString base = separator < 0 ? handle : handle.left(separator);
+    const auto it = m_byHandle.constFind(base);
     return it == m_byHandle.constEnd() ? nullptr : it->data();
 }
 

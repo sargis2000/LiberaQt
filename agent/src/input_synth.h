@@ -23,7 +23,18 @@ public:
     static QVariantMap typeText(ObjectRegistry &registry, const QVariantMap &params);
     static QVariantMap setText(ObjectRegistry &registry, const QVariantMap &params);
 
-    // TODO(m1): press/release, wheel, drag, IME composition
+    // Held keys, for shortcuts and modifier-dependent behaviour. Unlike key(), these do not pair
+    // a press with a release, so the caller is responsible for letting go again.
+    static QVariantMap press(ObjectRegistry &registry, const QVariantMap &params);
+    static QVariantMap release(ObjectRegistry &registry, const QVariantMap &params);
+
+    static QVariantMap wheel(ObjectRegistry &registry, const QVariantMap &params);
+
+    // Press on the source, move across in steps, release on the target. The intermediate moves
+    // matter: many widgets only begin a drag once the pointer has travelled far enough.
+    static QVariantMap drag(ObjectRegistry &registry, const QVariantMap &params);
+
+    // TODO(m2): IME composition
 };
 
 } // namespace liberaqt
