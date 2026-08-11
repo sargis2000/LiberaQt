@@ -16,6 +16,7 @@ when its application is absent, so a Qt build without qttools still runs the res
 
 from __future__ import annotations
 
+import glob
 import os
 import shutil
 import sys
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from liberaqt import LiberaQt
+from liberaqt import LiberaQt, LiberaQtError
 
 #: Applications this suite knows how to drive, and what each one is here to exercise.
 QT_APPS = {
@@ -35,10 +36,16 @@ QT_APPS = {
 }
 
 
+#: Where Libero installs itself by default. It is not part of Qt, so it is found separately.
+LIBERO_GLOB = "C:/Microchip/Libero_SoC_*/Libero_SoC/Designer/bin/libero.exe"
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Add the Qt location option."""
+    """Add the application location options."""
     parser.addoption("--liberaqt-qt-bin", default=None,
                      help="directory holding designer/assistant/linguist")
+    parser.addoption("--liberaqt-libero", default=None,
+                     help="path to libero.exe, for the third-party target")
 
 
 def _candidate_dirs(configured: str | None) -> list[Path]:
@@ -139,3 +146,51 @@ def qmleasing(driver: LiberaQt, qt_bin: Path):
 def quick_window(qmleasing):
     """The Qt Quick top-level of the easing editor, which is the one with no title."""
     return qmleasing.window(title="")
+
+
+# ------------------------------------------------------------------ third-party target
+#
+# Everything above ships with Qt. Libero is the opposite: a large commercial application from a
+# vendor who has never heard of this project, on a completely different ABI (Qt 5.15, 32-bit,
+# MSVC 2019). It is the only target here that proves the ABI resolution actually works, rather
+# than always picking the one agent that happens to be installed.
+
+
+@pytest.fixture(scope="session")
+def libero_exe(pytestconfig: pytest.Config) -> str:
+    """Path to libero.exe, skipping the suite when Libero is not installed."""
+    configured = pytestconfig.getoption("--liberaqt-libero") or os.environ.get("LIBERAQT_LIBERO")
+    if configured:
+        if not Path(configured).is_file():
+            pytest.skip(f"libero.exe not found at {configured}")
+        return configured
+    found = sorted(glob.glob(LIBERO_GLOB))
+    if not found:
+        pytest.skip("Libero is not installed; pass --liberaqt-libero=<path to libero.exe>")
+    return found[-1]
+
+
+@pytest.fixture(scope="session")
+def libero(driver: LiberaQt, libero_exe: str):
+    """Libero SoC, past its startup prompt and settled.
+
+    Libero asks about software updates before it will show a main window. The prompt is answered
+    with "No" -- "Yes" would reach out to the network -- and the "Do not remind me again" box is
+    deliberately left alone, because a test suite has no business changing a user's saved
+    settings. It is treated as optional so the fixture still works once somebody has ticked it.
+    """
+    app = driver.launch(libero_exe, timeout=240.0)
+    try:
+        app.wait_for_window(title="Information", timeout=60.0) \
+           .locator("QPushButton[text='No']").click()
+    except LiberaQtError:
+        pass
+    app.wait_for_window(title="Libero", timeout=120.0)
+    app.wait_for_idle(timeout=60.0)
+    return app
+
+
+@pytest.fixture(scope="session")
+def libero_main(libero):
+    """Libero's main window."""
+    return libero.window(title="Libero")
