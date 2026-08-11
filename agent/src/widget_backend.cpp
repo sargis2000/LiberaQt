@@ -291,6 +291,12 @@ QModelIndex searchByText(QAbstractItemModel *model, const QModelIndex &parent,
         }
         // Children hang off column 0, whatever the matching column turns out to be.
         const QModelIndex first = model->index(r, 0, parent);
+        // Lazy models only create their children once something asks for them, so a node that has
+        // never been expanded reports zero rows. Real applications are full of these -- a file
+        // tree, a design hierarchy -- and without this the search silently sees only the top
+        // level and reports the item as missing.
+        if (model->canFetchMore(first))
+            model->fetchMore(first);
         if (model->hasChildren(first)) {
             const QModelIndex found = searchByText(model, first, wanted);
             if (found.isValid())
