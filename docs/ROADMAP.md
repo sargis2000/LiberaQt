@@ -10,10 +10,10 @@ Goal: `click a button in a QWidget app from Python`, end to end, Linux + Qt 6.7 
 * Agent: generic plugin loads, TCP server, JSON framing, `session.ping`, `session.info`.
 * Agent: object registry, `object.find` with type + objectName only, `input.click`.
 * Client: transport, launcher, `Application`, `Window`, minimal `Locator.click()`.
-* Sample widget app + one passing test.
-* CI: Linux build of the agent, run the sample test under `xvfb-run`.
+* One passing test against a real Qt application.
+* CI: Linux build of the agent, run the integration suite under `xvfb-run`.
 
-Exit criterion: `pytest examples/tests/test_widgets.py` is green in CI.
+Exit criterion: `pytest integration/` is green in CI.
 
 ## Milestone 1 — Usable for real widget tests (4 weeks)
 

@@ -40,9 +40,9 @@ liberaqt = "liberaqt.cli:main"
 liberaqt = "liberaqt.pytest_plugin"
 
 [project.urls]
-Homepage = "https://github.com/OWNER/liberaqt"
-Documentation = "https://github.com/OWNER/liberaqt/tree/main/docs"
-Issues = "https://github.com/OWNER/liberaqt/issues"
+Homepage = "https://github.com/sargis2000/QT-Automation"
+Documentation = "https://github.com/sargis2000/QT-Automation/tree/main/docs"
+Issues = "https://github.com/sargis2000/QT-Automation/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/liberaqt"]
@@ -64,7 +64,7 @@ convention = "google"
 # Test names and their bodies are the documentation; a docstring is added only when the *reason*
 # for a test is not obvious from reading it.
 "tests/**" = ["D100", "D101", "D102", "D103", "D104"]
-"examples/**" = ["D100", "D101", "D102", "D103", "D104"]
+"integration/**" = ["D100", "D101", "D102", "D103", "D104"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

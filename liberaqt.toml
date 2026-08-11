@@ -1,5 +1,7 @@
 # Repo-level liberaqt config, picked up by the pytest plugin (rootdir/liberaqt.toml).
-# The executable is passed on the command line (--liberaqt-exe) so this file stays
-# platform-neutral; see examples/liberaqt.toml for a full user-facing example.
+#
+# The integration suite under integration/ drives Qt's own shipped applications and resolves them
+# itself, so nothing here points at an executable. This file exists to document the section and to
+# give `liberaqt run` a default timeout.
 [liberaqt]
-object_map = "examples/objects.yaml"
+timeout = 10.0

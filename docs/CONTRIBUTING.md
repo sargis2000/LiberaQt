@@ -6,7 +6,7 @@
 liberaqt/
 ├── src/liberaqt/        Python client (pure Python, no Qt dependency)
 ├── agent/               C++ Qt agent (CMake)
-├── examples/            Sample widget + QML app and example tests
+├── integration/         Tests driving Qt's own shipped applications
 ├── docs/                Design documents (this folder)
 └── tests/               Unit tests for the client (no Qt needed)
 ```
@@ -27,8 +27,14 @@ The install layout must be `<prefix>/plugins/generic/libliberaqt.so` — that is
 ```bash
 pip install -e ".[dev]"
 pytest tests/            # unit tests, no Qt required
-pytest examples/tests/   # integration, needs a built agent + sample app
+pytest integration/      # drives Qt Designer/Assistant/Linguist; needs a built agent
 ```
+
+The integration suite deliberately uses no purpose-built sample application. It drives Qt's own
+programs, which are large, were written with no knowledge of this project, and ship inside the Qt
+installation -- so they are guaranteed to match the agent's Qt version and compiler ABI. Point it
+at a Qt installation with `--liberaqt-qt-bin=<dir>`, `LIBERAQT_QT_BIN` or `QTDIR`; otherwise it
+looks beside `qmake` on `PATH`. Each fixture skips when its application is missing.
 
 ## Rules of thumb
 

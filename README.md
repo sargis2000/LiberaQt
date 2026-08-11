@@ -158,12 +158,23 @@ cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR -DCMAKE_BUILD_TYPE=Rele
 cmake --build build/agent --parallel
 cmake --install build/agent --prefix ~/.cache/liberaqt/agents/qt6.7-linux-x86_64-gcc
 
-cmake -S examples/sample_app -B build/sample -DCMAKE_PREFIX_PATH=$QTDIR
-cmake --build build/sample --parallel
-
-pytest tests/                                    # unit tests, no Qt needed
-pytest examples/tests/ --liberaqt-exe build/sample/sample_widgets
+pytest tests/          # unit tests, no Qt needed
+pytest integration/    # drives Qt Designer, Assistant and Linguist
 ```
+
+## Testing against real applications
+
+There is no sample application in this repository. The integration suite drives Qt's own shipped
+programs -- Designer, Assistant and Linguist -- because a purpose-built sample agrees with
+whatever the driver happens to do, and a real application does not. They also ship inside the Qt
+installation, so they are guaranteed to match the agent's Qt version and compiler ABI.
+
+```bash
+pytest integration/ --liberaqt-qt-bin=/path/to/Qt/6.7.3/gcc_64/bin
+```
+
+With no option it looks at `LIBERAQT_QT_BIN`, `QTDIR`, then beside `qmake` on `PATH`, and skips
+any application that is not installed.
 
 ## Licence
 
