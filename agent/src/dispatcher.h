@@ -37,18 +37,33 @@ class Dispatcher
 public:
     using Handler = std::function<QVariant(const QVariantMap &params)>;
 
+    // Hands a finished response envelope back to the transport. Called synchronously for ordinary
+    // commands, and later from the event loop for asynchronous ones.
+    using Reply = std::function<void(const QVariantMap &response)>;
+
+    // An asynchronous command finishes by calling exactly one of resolve/reject, possibly long
+    // after the handler itself has returned. Commands that have to let the application run --
+    // waiting for the UI to settle, waiting for a signal -- must be asynchronous: blocking inside
+    // a handler strands the reply if the application enters a nested event loop of its own.
+    using Resolver = std::function<void(const QVariant &result)>;
+    using Rejecter = std::function<void(const CommandError &error)>;
+    using AsyncHandler =
+        std::function<void(const QVariantMap &params, Resolver resolve, Rejecter reject)>;
+
     explicit Dispatcher(ObjectRegistry &registry);
 
-    // Returns a complete protocol response object for the given request.
-    QVariantMap handle(const QVariantMap &request);
+    // Builds the protocol response for a request and passes it to `reply`.
+    void handle(const QVariantMap &request, Reply reply);
 
     void registerCommand(const QString &name, Handler handler);
+    void registerAsyncCommand(const QString &name, AsyncHandler handler);
 
 private:
     void registerBuiltins();
 
     ObjectRegistry &m_registry;
     QMap<QString, Handler> m_handlers;
+    QMap<QString, AsyncHandler> m_asyncHandlers;
 };
 
 } // namespace liberaqt

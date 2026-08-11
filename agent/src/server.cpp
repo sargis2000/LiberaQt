@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
 
@@ -105,6 +106,14 @@ void Server::sendHello()
 void Server::onReadyRead()
 {
     m_buffer += m_client->readAll();
+
+    // A handler can let the application run -- and therefore re-enter this slot through a nested
+    // event loop. Only the outermost frame may consume the buffer; a nested one appends what it
+    // read and returns, leaving the outer loop to pick the new lines up.
+    if (m_dispatching)
+        return;
+    m_dispatching = true;
+
     int newline;
     while ((newline = m_buffer.indexOf('\n')) >= 0) {
         const QByteArray line = m_buffer.left(newline);
@@ -112,6 +121,8 @@ void Server::onReadyRead()
         if (!line.trimmed().isEmpty())
             handleLine(line);
     }
+
+    m_dispatching = false;
 }
 
 void Server::handleLine(const QByteArray &line)
@@ -150,7 +161,13 @@ void Server::handleLine(const QByteArray &line)
         return;
     }
 
-    writeMessage(m_dispatcher.handle(message));
+    // The reply may be delivered long after handle() returns, so it is written through a guarded
+    // pointer: by then the client may well have gone away.
+    QPointer<Server> self(this);
+    m_dispatcher.handle(message, [self](const QVariantMap &response) {
+        if (self)
+            self->writeMessage(response);
+    });
 }
 
 void Server::writeMessage(const QVariantMap &message)

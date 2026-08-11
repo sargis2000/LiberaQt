@@ -2,12 +2,15 @@
 
 #include <QAbstractAnimation>
 #include <QCoreApplication>
-#include <QElapsedTimer>
-#include <QEventLoop>
+#include <QDateTime>
+#include <QTimer>
 
 namespace liberaqt {
 
-IdleTracker::IdleTracker() = default;
+IdleTracker::IdleTracker(QObject *parent)
+    : QObject(parent)
+{
+}
 
 bool IdleTracker::hasRunningAnimations() const
 {
@@ -23,29 +26,59 @@ bool IdleTracker::hasPendingNetwork() const
     return false;
 }
 
-int IdleTracker::waitForIdle(int quietMs, bool animations, bool network, int timeoutMs)
+void IdleTracker::waitForIdle(int quietMs, bool animations, bool network, int timeoutMs, Done done)
 {
-    QElapsedTimer total;
-    total.start();
+    m_quietMs = quietMs;
+    m_timeoutMs = timeoutMs;
+    m_animations = animations;
+    m_network = network;
+    m_done = std::move(done);
 
-    QElapsedTimer quiet;
-    quiet.start();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    m_startedAt = now;
+    m_quietSince = now;
+    m_lastTickAt = now;
 
-    while (total.elapsed() < timeoutMs) {
-        // Drain everything currently queued, including deferred deletes.
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    QTimer::singleShot(0, this, &IdleTracker::tick);
+}
+
+void IdleTracker::tick()
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+
+    // How late was this zero-delay tick? A prompt tick means everything queued ahead of it had
+    // already been delivered; a late one means the loop is still working through a backlog.
+    const bool congested = (now - m_lastTickAt) > LateMs;
+    m_lastTickAt = now;
+
+    const bool busy = congested
+                      || (m_animations && hasRunningAnimations())
+                      || (m_network && hasPendingNetwork());
+    if (busy)
+        m_quietSince = now;
+
+    if (!busy && (now - m_quietSince) >= m_quietMs) {
+        // One more turn so deferred deletes and queued connections posted by the last events
+        // have run before we call the UI settled.
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-
-        const bool busy = (animations && hasRunningAnimations())
-                          || (network && hasPendingNetwork());
-        if (busy) {
-            quiet.restart();
-            continue;
-        }
-        if (quiet.elapsed() >= quietMs)
-            return static_cast<int>(total.elapsed());
+        const Done done = m_done;
+        m_done = nullptr;
+        if (done)
+            done(static_cast<int>(now - m_startedAt));
+        deleteLater();
+        return;
     }
-    return -1;
+
+    if ((now - m_startedAt) >= m_timeoutMs) {
+        const Done done = m_done;
+        m_done = nullptr;
+        if (done)
+            done(-1);
+        deleteLater();
+        return;
+    }
+
+    QTimer::singleShot(0, this, &IdleTracker::tick);
 }
 
 } // namespace liberaqt

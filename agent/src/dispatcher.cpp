@@ -11,6 +11,7 @@
 #include "widget_backend.h"
 
 #include <cstdlib>
+#include <memory>
 
 #include <QCoreApplication>
 #include <QVariantList>
@@ -39,42 +40,88 @@ void Dispatcher::registerCommand(const QString &name, Handler handler)
     m_handlers.insert(name, std::move(handler));
 }
 
-QVariantMap Dispatcher::handle(const QVariantMap &request)
+void Dispatcher::registerAsyncCommand(const QString &name, AsyncHandler handler)
+{
+    m_asyncHandlers.insert(name, std::move(handler));
+}
+
+namespace {
+
+QVariantMap okResponse(const QVariant &id, const QVariant &result)
 {
     QVariantMap response;
-    response.insert(QStringLiteral("id"), request.value(QStringLiteral("id")));
+    response.insert(QStringLiteral("id"), id);
+    response.insert(QStringLiteral("ok"), true);
+    response.insert(QStringLiteral("result"), result);
+    return response;
+}
 
+QVariantMap errorResponse(const QVariant &id, const QString &code, const QString &message,
+                          const QVariantMap &data = {})
+{
+    QVariantMap error;
+    error.insert(QStringLiteral("code"), code);
+    error.insert(QStringLiteral("message"), message);
+    if (!data.isEmpty())
+        error.insert(QStringLiteral("data"), data);
+    QVariantMap response;
+    response.insert(QStringLiteral("id"), id);
+    response.insert(QStringLiteral("ok"), false);
+    response.insert(QStringLiteral("error"), error);
+    return response;
+}
+
+} // namespace
+
+void Dispatcher::handle(const QVariantMap &request, Reply reply)
+{
+    const QVariant id = request.value(QStringLiteral("id"));
     const QString cmd = request.value(QStringLiteral("cmd")).toString();
+    const QVariantMap params = request.value(QStringLiteral("params")).toMap();
+
+    const auto async = m_asyncHandlers.constFind(cmd);
+    if (async != m_asyncHandlers.constEnd()) {
+        // Guard against a handler that resolves twice, or resolves after rejecting: the client
+        // correlates on id, so a duplicate reply would be attributed to a later command.
+        auto answered = std::make_shared<bool>(false);
+        Resolver resolve = [reply, id, answered](const QVariant &result) {
+            if (*answered)
+                return;
+            *answered = true;
+            reply(okResponse(id, result));
+        };
+        Rejecter reject = [reply, id, answered](const CommandError &err) {
+            if (*answered)
+                return;
+            *answered = true;
+            reply(errorResponse(id, err.code, err.message, err.data));
+        };
+        try {
+            (*async)(params, resolve, reject);
+        } catch (const CommandError &err) {
+            reject(err);
+        } catch (const std::exception &err) {
+            reject(CommandError(ErrorCode::Internal, QString::fromUtf8(err.what())));
+        }
+        return;
+    }
+
     const auto it = m_handlers.constFind(cmd);
     if (it == m_handlers.constEnd()) {
-        QVariantMap error;
-        error.insert(QStringLiteral("code"), QString::fromLatin1(ErrorCode::Unsupported));
-        error.insert(QStringLiteral("message"), QStringLiteral("unknown command: %1").arg(cmd));
-        response.insert(QStringLiteral("ok"), false);
-        response.insert(QStringLiteral("error"), error);
-        return response;
+        reply(errorResponse(id, QString::fromLatin1(ErrorCode::Unsupported),
+                            QStringLiteral("unknown command: %1").arg(cmd)));
+        return;
     }
 
     // A handler must never let an exception escape into the Qt event loop.
     try {
-        const QVariant result = (*it)(request.value(QStringLiteral("params")).toMap());
-        response.insert(QStringLiteral("ok"), true);
-        response.insert(QStringLiteral("result"), result);
+        reply(okResponse(id, (*it)(params)));
     } catch (const CommandError &err) {
-        QVariantMap error;
-        error.insert(QStringLiteral("code"), err.code);
-        error.insert(QStringLiteral("message"), err.message);
-        error.insert(QStringLiteral("data"), err.data);
-        response.insert(QStringLiteral("ok"), false);
-        response.insert(QStringLiteral("error"), error);
+        reply(errorResponse(id, err.code, err.message, err.data));
     } catch (const std::exception &err) {
-        QVariantMap error;
-        error.insert(QStringLiteral("code"), QString::fromLatin1(ErrorCode::Internal));
-        error.insert(QStringLiteral("message"), QString::fromUtf8(err.what()));
-        response.insert(QStringLiteral("ok"), false);
-        response.insert(QStringLiteral("error"), error);
+        reply(errorResponse(id, QString::fromLatin1(ErrorCode::Internal),
+                            QString::fromUtf8(err.what())));
     }
-    return response;
 }
 
 void Dispatcher::registerBuiltins()
@@ -197,20 +244,29 @@ void Dispatcher::registerBuiltins()
     // Each new command needs: PROTOCOL.md entry, handler here, Python method, and a test.
 
     // ---- synchronisation -------------------------------------------------
-    registerCommand(QStringLiteral("sync.wait_idle"), [](const QVariantMap &params) -> QVariant {
+    // Asynchronous: the wait is driven by the event loop rather than pumping it, so the reply
+    // still arrives if the application enters a nested loop (a modal dialog) while we wait.
+    registerAsyncCommand(QStringLiteral("sync.wait_idle"),
+                         [](const QVariantMap &params, Resolver resolve, Rejecter reject) {
         const int quietMs = params.value(QStringLiteral("quiet_ms"), 50).toInt();
         const bool animations = params.value(QStringLiteral("animations"), true).toBool();
         const bool network = params.value(QStringLiteral("network"), false).toBool();
         const int timeoutMs = params.value(QStringLiteral("timeout_ms"), 10000).toInt();
 
-        IdleTracker tracker;
-        const int waited = tracker.waitForIdle(quietMs, animations, network, timeoutMs);
-        if (waited < 0)
-            throw CommandError(ErrorCode::Timeout,
-                               QStringLiteral("UI did not become idle within %1 ms").arg(timeoutMs));
-        QVariantMap out;
-        out.insert(QStringLiteral("waited_ms"), waited);
-        return out;
+        // Owned by the event loop: deletes itself once it has reported.
+        auto *tracker = new IdleTracker(QCoreApplication::instance());
+        tracker->waitForIdle(quietMs, animations, network, timeoutMs,
+                             [resolve, reject, timeoutMs](int waited) {
+            if (waited < 0) {
+                reject(CommandError(ErrorCode::Timeout,
+                                    QStringLiteral("UI did not become idle within %1 ms")
+                                        .arg(timeoutMs)));
+                return;
+            }
+            QVariantMap out;
+            out.insert(QStringLiteral("waited_ms"), waited);
+            resolve(out);
+        });
     });
 
     // ---- widgets / models ------------------------------------------------

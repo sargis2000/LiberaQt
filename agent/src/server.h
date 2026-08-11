@@ -43,6 +43,7 @@ private:
     QByteArray m_buffer;
     QString m_token;
     bool m_authenticated = false;
+    bool m_dispatching = false;
 };
 
 } // namespace liberaqt
