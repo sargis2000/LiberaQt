@@ -85,3 +85,21 @@ def test_invalid_selectors_raise_with_position(bad):
     with pytest.raises(InvalidSelectorError) as excinfo:
         S.parse(bad)
     assert "offset" in str(excinfo.value)
+
+
+def test_namespaced_type_name():
+    """QMetaObject::className() is qualified, so real applications need '::' to lex."""
+    node = S.parse("qdesigner_internal::NewFormWidget").to_json()
+    assert node["steps"] == [{"type": "qdesigner_internal::NewFormWidget"}]
+
+
+def test_namespaced_type_still_splits_at_a_pseudo_class():
+    steps = S.parse("ns::Widget:visible").to_json()["steps"]
+    assert steps[0]["type"] == "ns::Widget"
+    assert "visible" in str(steps[0])
+
+
+def test_namespaced_types_on_both_sides_of_a_combinator():
+    steps = S.parse("ns::Outer ns::Inner#field").to_json()["steps"]
+    assert [s["type"] for s in steps] == ["ns::Outer", "ns::Inner"]
+    assert steps[1]["objectName"] == "field"

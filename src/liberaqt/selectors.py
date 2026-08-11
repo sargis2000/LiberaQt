@@ -27,8 +27,11 @@ from .errors import InvalidSelectorError
 OPERATORS = ("*=", "^=", "$=", "~=", "!=", "=")
 STATE_PSEUDOS = {"visible", "enabled", "checked", "focused", "first", "last"}
 
-# Note: ':' is deliberately NOT part of an identifier -- it introduces a pseudo-class.
-_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_\.]*|\*")
+# A single ':' is deliberately NOT part of an identifier -- it introduces a pseudo-class. A
+# doubled one is: real applications are full of namespaced classes (``qdesigner_internal::
+# NewFormWidget``), and QMetaObject::className() reports the qualified name, so a selector has to
+# be able to spell it. The lookahead keeps ``QPushButton:visible`` splitting at the pseudo-class.
+_IDENT = re.compile(r"[A-Za-z_](?:[A-Za-z0-9_\.]|::(?=[A-Za-z_]))*|\*")
 
 
 @dataclass

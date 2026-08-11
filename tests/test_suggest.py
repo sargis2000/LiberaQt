@@ -188,3 +188,29 @@ def test_table_lists_every_suggestion_with_its_status():
 
 def test_empty_table_says_so():
     assert format_table([]) == "no objects found"
+
+
+def test_objectname_that_is_not_an_identifier_uses_the_attribute_form():
+    """Qt Linguist names widgets things like 'comment/context view', which cannot follow a '#'."""
+    assert candidates(node("FormWidget", name="comment/context view"))[0] == (
+        "FormWidget[objectName='comment/context view']"
+    )
+
+
+def test_objectname_with_a_space_uses_the_attribute_form():
+    assert candidates(node("MessageEditor", name="scroll area"))[0] == (
+        "MessageEditor[objectName='scroll area']"
+    )
+
+
+def test_bare_objectname_still_uses_the_hash_form():
+    assert candidates(node("QPushButton", name="okButton"))[0] == "QPushButton#okButton"
+
+
+def test_every_suggested_objectname_selector_parses():
+    """Suggestions must always parse -- emitting one that did not broke `inspect` on real apps."""
+    from liberaqt.selectors import parse
+
+    for name in ("okButton", "comment/context view", "scroll area", "a.b", "with-dash"):
+        for selector in candidates(node("QWidget", name=name)):
+            parse(selector)

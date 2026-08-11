@@ -12,6 +12,7 @@ to a resolver callable. The CLI passes one backed by the agent; tests pass a fak
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -20,6 +21,9 @@ from .selectors import parse
 
 #: Longer strings make unwieldy selectors and are usually dynamic anyway.
 MAX_TEXT = 40
+
+#: An objectName that can be written after '#'. Anything else needs the quoted attribute form.
+_BARE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 
 #: Qt's own internal children (qt_scrollarea_viewport, qt_menubar, ...). Real, but never what a
 #: test author is looking for, and they bury the handful of objects that are.
@@ -96,7 +100,11 @@ def candidates(node: dict) -> list[str]:
 
     out = []
     if name:
-        out.append(f"{cls}#{name}")
+        # `#name` is the readable form, but it only lexes while the name is a bare identifier.
+        # Applications set names like "comment/context view", so anything else has to go through
+        # the quoted attribute form instead.
+        out.append(f"{cls}#{name}" if _BARE_NAME.fullmatch(name)
+                   else f"{cls}[objectName={quote(name)}]")
     if text and len(text) <= MAX_TEXT and "\n" not in text:
         out.append(f"{cls}[text={quote(text)}]")
     out.append(cls)
