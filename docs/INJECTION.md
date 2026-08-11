@@ -79,6 +79,33 @@ Compiled into a test build of the app, this sidesteps every ABI and injection pr
 is just a linked library. Recommended for teams that control the app's build — which, for an
 in-house automation tool, is usually the case. Also the only option for statically-linked Qt.
 
+## 4a. When none of this can work: statically-linked Qt
+
+Modes 1–3 all end with the agent running inside the process and calling into the host's Qt. A
+statically-linked Qt defeats that in two independent ways:
+
+* There is no plugin loader to hook. `QT_QPA_GENERIC_PLUGINS` works by having Qt search for and
+  load external plugin binaries at runtime; a static build resolves its plugins at link time.
+* An agent that brought its own Qt would put two independent copies of Qt in one process — two
+  `QCoreApplication::instance()`, two type registries, two event dispatchers. That is undefined
+  behaviour, not a workaround, so DLL injection does not rescue it either.
+
+Mode 4 is the only route, and it requires building the application yourself.
+
+`liberaqt doctor` detects this and says so, rather than reporting a missing agent. It reads the
+`QLibraryInfo::build()` stamp that Qt writes into whichever binary carries QtCore — the shared
+library for a normal build, the executable itself for a static one:
+
+```
+Qt 6.7.2 (x86_64-little_endian-llp64 static release build; by MSVC 2019)
+```
+
+That single string gives the Qt version, the linkage and the compiler, so no part of the verdict
+is inferred. A worked example is Microchip's Libero online installer, which is Qt Installer
+Framework: static Qt 6.7.2, MSVC 2019, and correctly reported as not instrumentable. Note that a
+vendor's *installer* being static says nothing about the application it installs — large
+applications almost always ship Qt as DLLs, because their own plugin architectures need it.
+
 ## 5. Security posture
 
 The agent is a remote-code-execution surface by design (`object.invoke`, `quick.evaluate`).

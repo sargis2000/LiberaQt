@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import platform
 import re
+import struct
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -168,6 +169,221 @@ def _dll_minor_version(dll: Path) -> int | None:
         return None
 
 
+# ------------------------------------------------------------------ target inspection
+
+#: Qt stamps QLibraryInfo::build() into the binary that carries QtCore -- the shared library for a
+#: normal build, the executable itself for a static one. It states the version, the linkage and the
+#: compiler outright, which beats inferring any of them:
+#:   Qt 6.7.2 (x86_64-little_endian-llp64 static release build; by MSVC 2019)
+_QT_BUILD_RE = re.compile(rb"Qt (\d+)\.(\d+)\.(\d+) \(([^\x00]{0,220})")
+
+_COMPILERS = ((b"MSVC 2022", "msvc2022"), (b"MSVC 2019", "msvc2019"),
+              (b"MSVC 2017", "msvc2017"), (b"MSVC", "msvc"),
+              (b"MinGW", "mingw"), (b"GCC", "gcc"), (b"Clang", "clang"))
+
+
+@dataclass
+class BinaryReport:
+    """What a target executable says about whether the agent can be loaded into it.
+
+    Attributes:
+        path: The executable inspected.
+        qt_version: Qt minor version such as ``"6.7"``, or None if it could not be determined.
+        linkage: ``"dynamic"``, ``"static"``, ``"none"`` (no Qt at all) or ``"unknown"``.
+        toolchain: Compiler that built Qt, e.g. ``"msvc2019"``, when the binary says so.
+        arch: Architecture of the *target*, e.g. ``"x86"``. A 32-bit application on a 64-bit host
+            needs a 32-bit agent, so this must never be inferred from the host.
+        injectable: Whether the generic-plugin mechanism can work at all.
+        reason: Why not, when ``injectable`` is False.
+    """
+
+    path: Path
+    qt_version: str | None = None
+    linkage: str = "unknown"
+    toolchain: str | None = None
+    arch: str | None = None
+    injectable: bool = False
+    reason: str = ""
+
+
+#: PE COFF machine values worth distinguishing.
+_PE_MACHINES = {0x14C: "x86", 0x8664: "x86_64", 0xAA64: "aarch64"}
+
+
+def _pe_machine(data: bytes) -> str | None:
+    """Architecture a PE binary was built for.
+
+    Args:
+        data: The first kilobyte of the file is enough.
+
+    Returns:
+        ``"x86"``, ``"x86_64"``, ``"aarch64"``, or None if this is not a PE.
+    """
+    try:
+        if data[:2] != b"MZ":
+            return None
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe:pe + 4] != b"PE\0\0":
+            return None
+        return _PE_MACHINES.get(struct.unpack_from("<H", data, pe + 4)[0])
+    except Exception:  # noqa: BLE001 - inspection is best effort by design
+        return None
+
+
+def target_platform_tag(executable: str) -> str:
+    """Platform tag an agent must carry to be loadable into this executable.
+
+    Deliberately not :func:`current_platform_tag`: a 32-bit application runs perfectly well on a
+    64-bit host, and pointing its user at an x86_64 agent produces a plugin that silently refuses
+    to load. Falls back to the host tag when the target cannot be read.
+
+    Args:
+        executable: Path to the application binary.
+
+    Returns:
+        A tag such as ``"windows-x86"``.
+    """
+    try:
+        arch = _pe_machine(Path(executable).read_bytes()[:0x400])
+    except OSError:
+        arch = None
+    if not arch:
+        return current_platform_tag()
+    system = current_platform_tag().split("-")[0]
+    return f"{system}-{arch}"
+
+
+def _pe_imported_dlls(data: bytes) -> list[str]:
+    """DLL names in a PE import table.
+
+    Args:
+        data: Whole file contents.
+
+    Returns:
+        The imported DLL names, or an empty list if this is not a parseable PE.
+    """
+    try:
+        if data[:2] != b"MZ":
+            return []
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe:pe + 4] != b"PE\0\0":
+            return []
+        n_sections = struct.unpack_from("<H", data, pe + 6)[0]
+        opt_size = struct.unpack_from("<H", data, pe + 20)[0]
+        opt = pe + 24
+        pe32plus = struct.unpack_from("<H", data, opt)[0] == 0x20B
+
+        sections = []
+        for i in range(n_sections):
+            off = opt + opt_size + i * 40
+            v_size, v_addr, r_size, r_addr = struct.unpack_from("<IIII", data, off + 8)
+            sections.append((v_addr, max(v_size, r_size), r_addr))
+
+        def to_offset(rva: int) -> int | None:
+            for v_addr, size, r_addr in sections:
+                if v_addr <= rva < v_addr + size:
+                    return r_addr + (rva - v_addr)
+            return None
+
+        import_rva = struct.unpack_from("<I", data, opt + (112 if pe32plus else 96) + 8)[0]
+        cursor = to_offset(import_rva)
+        if not cursor:
+            return []
+        names = []
+        while len(names) < 512:
+            name_rva = struct.unpack_from("<I", data, cursor + 12)[0]
+            if name_rva == 0:
+                break
+            at = to_offset(name_rva)
+            if at is None:
+                break
+            names.append(data[at:data.index(b"\0", at)].decode("latin-1"))
+            cursor += 20
+        return names
+    except Exception:  # noqa: BLE001 - inspection is best effort by design
+        return []
+
+
+def _qt_build_stamp(data: bytes) -> tuple[str, str, str | None] | None:
+    """Parse Qt's embedded build string.
+
+    Args:
+        data: Whole file contents.
+
+    Returns:
+        ``(qt_minor, linkage, toolchain)`` or None when the stamp is absent.
+    """
+    match = _QT_BUILD_RE.search(data)
+    if not match:
+        return None
+    detail = match.group(4)
+    linkage = "static" if b"static" in detail else "dynamic"
+    toolchain = next((tag for needle, tag in _COMPILERS if needle in detail), None)
+    return f"{int(match.group(1))}.{int(match.group(2))}", linkage, toolchain
+
+
+def inspect_binary(executable: str) -> BinaryReport:
+    """Work out whether the agent can be injected into an executable, and why not if it cannot.
+
+    A statically linked Qt is the one case no injection mechanism can rescue: the generic-plugin
+    hook does not exist, and loading an agent that brings its own Qt would put two independent
+    copies of Qt in one process. Saying that plainly is far more useful than reporting an
+    unmatched ABI.
+
+    Args:
+        executable: Path to the application binary.
+
+    Returns:
+        What could be determined. Absent evidence is reported as ``"unknown"``, never guessed.
+    """
+    path = Path(executable)
+    report = BinaryReport(path=path)
+    if not path.exists():
+        report.reason = "file not found"
+        return report
+
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        report.reason = f"could not read the file: {exc}"
+        return report
+
+    report.arch = _pe_machine(data)
+    imports = _pe_imported_dlls(data) if sys.platform == "win32" else []
+    if imports:
+        report.toolchain = ("msvc" if any(n.lower().startswith(("msvcp1", "vcruntime"))
+                                          for n in imports)
+                            else "mingw" if any("libgcc" in n.lower() or "libstdc++" in n.lower()
+                                                for n in imports)
+                            else None)
+
+    # A dynamically linked Qt names its Qt libraries as dependencies.
+    linked_qt = detect_qt_version(str(path))
+    if linked_qt:
+        report.qt_version = linked_qt
+        report.linkage = "dynamic"
+        report.injectable = True
+        return report
+
+    # No Qt dependency. Either Qt is compiled in, or this is not a Qt application at all.
+    stamp = _qt_build_stamp(data)
+    if stamp:
+        report.qt_version, report.linkage, toolchain = stamp
+        report.toolchain = toolchain or report.toolchain
+        if report.linkage == "static":
+            report.reason = (
+                "Qt is linked statically into this executable, so it has no plugin loader for "
+                "the agent to use, and an agent carrying its own Qt would put two copies of Qt "
+                "in one process. No injection mode can work; the application has to be built "
+                "with the agent embedded (LiberaQt::start(), docs/INJECTION.md section 4)."
+            )
+        return report
+
+    report.linkage = "none"
+    report.reason = "no Qt could be found in this binary; it may not be a Qt application"
+    return report
+
+
 # ------------------------------------------------------------------ resolution
 
 def search_paths() -> list[Path]:
@@ -216,7 +432,7 @@ def installed() -> list[AgentBuild]:
 def resolve(executable: str, qt: str | None = None) -> AgentBuild:
     """Pick the agent build for this AUT, or raise with actionable instructions."""
     wanted_qt = qt or detect_qt_version(executable)
-    tag = current_platform_tag()
+    tag = target_platform_tag(executable)
     candidates = installed()
 
     if wanted_qt:

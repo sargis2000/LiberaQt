@@ -6,10 +6,66 @@ import argparse
 import json
 import shutil
 import sys
+import textwrap
 from pathlib import Path
 
 from . import LiberaQt, __version__, agent_registry
 from .errors import LiberaQtError
+
+
+def _wrap(text: str, indent: str = "    ", width: int = 94) -> str:
+    """Wrap an explanation to the terminal without losing the indent."""
+    return "\n".join(textwrap.wrap(text, width=width, initial_indent=indent,
+                                   subsequent_indent=indent))
+
+
+def _report_target(exe: str) -> bool:
+    """Diagnose one target executable.
+
+    Distinguishes "no agent installed for this ABI", which the user can fix by building one, from
+    "this binary cannot be instrumented at all", which no agent will ever fix.
+
+    Args:
+        exe: Path to the application binary.
+
+    Returns:
+        True when the agent could be injected into it.
+    """
+    report = agent_registry.inspect_binary(exe)
+    print(f"target   {exe}")
+
+    if report.linkage == "none" or not report.path.exists():
+        print(f"  Qt: {'not found in this binary' if report.path.exists() else 'unreadable'}")
+        print("  NOT INSTRUMENTABLE")
+        print(_wrap(report.reason))
+        return False
+
+    described = report.qt_version or "unknown version"
+    if report.toolchain:
+        described += f", {report.toolchain}"
+    if report.arch:
+        described += f", {report.arch}"
+    print(f"  detected Qt: {described} ({report.linkage} linkage)")
+    if report.arch and report.arch != agent_registry.current_platform_tag().split("-")[-1]:
+        print(_wrap(f"This is a {report.arch} binary on a "
+                    f"{agent_registry.current_platform_tag().split('-')[-1]} host, so the agent "
+                    f"must be built for {report.arch} too."))
+
+    if report.linkage == "static":
+        print("  NOT INSTRUMENTABLE")
+        print(_wrap(report.reason))
+        return False
+
+    try:
+        print(f"  matching agent: {agent_registry.resolve(exe)}")
+        return True
+    except LiberaQtError as exc:
+        print(f"  NO MATCHING AGENT\n{exc}")
+        if report.toolchain:
+            print(_wrap(f"This binary was built with {report.toolchain}, so the agent has to be "
+                        f"too -- an agent for the right Qt version but the wrong compiler will "
+                        f"not load."))
+        return False
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -29,15 +85,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     ok = bool(builds)
     if args.exe:
-        detected = agent_registry.detect_qt_version(args.exe)
-        print(f"target   {args.exe}")
-        print(f"  detected Qt: {detected or 'unknown'}")
-        try:
-            build = agent_registry.resolve(args.exe)
-            print(f"  matching agent: {build}")
-        except LiberaQtError as exc:
-            ok = False
-            print(f"  NO MATCHING AGENT\n{exc}")
+        ok = _report_target(args.exe) and ok
 
     if sys.platform.startswith("linux"):
         display = bool(__import__("os").environ.get("DISPLAY") or
