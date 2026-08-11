@@ -519,7 +519,7 @@ class Locator:
         """
         return self._session.call(Cmd.LIST_PROPERTIES, {"handle": self.resolve()})
 
-    def invoke(self, method: str, *args: Any) -> Any:
+    def invoke(self, method: str, *args: Any, queued: bool = False) -> Any:
         """Call a slot or ``Q_INVOKABLE`` method on the object.
 
         Only those two are reachable: plain public functions are invisible to Qt's meta-object
@@ -528,17 +528,27 @@ class Locator:
         Args:
             method: Method name.
             *args: Arguments, coerced to the declared parameter types.
+            queued: Post the call instead of making it, and return as soon as it is queued.
+                Required for anything that opens a modal dialog: such a method does not return
+                until the dialog is dismissed, so a direct call would strand the reply for as
+                long as the dialog is up. The return value is lost, so this is opt-in.
 
         Returns:
-            The decoded return value, or ``None`` for a void method.
+            The decoded return value, or ``None`` for a void method or a queued call.
 
         Raises:
             UnsupportedOperationError: No such slot or invokable method.
+
+        Example:
+            Opening a modal wizard from a menu action::
+
+                win.locator("QAction[text='New Project']").invoke("trigger", queued=True)
         """
+        params = {"handle": self.resolve(), "method": method, "args": list(args)}
+        if queued:
+            params["queued"] = True
         return decode_value(
-            self._session.call(Cmd.INVOKE,
-                               {"handle": self.resolve(), "method": method, "args": list(args)},
-                               selector=self._selector).get("value")
+            self._session.call(Cmd.INVOKE, params, selector=self._selector).get("value")
         )
 
     def evaluate(self, expression: str) -> Any:

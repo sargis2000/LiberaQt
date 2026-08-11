@@ -46,6 +46,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
                      help="directory holding designer/assistant/linguist")
     parser.addoption("--liberaqt-libero", default=None,
                      help="path to libero.exe, for the third-party target")
+    parser.addoption("--liberaqt-e2e", action="store_true",
+                     help="run the Libero end-to-end flow, which writes projects and synthesises")
+    parser.addoption("--liberaqt-e2e-dir", default=r"C:\Users\Public\lqt_e2e",
+                     help="where the end-to-end flow puts its project; keep it SHORT (MAX_PATH)")
 
 
 def _candidate_dirs(configured: str | None) -> list[Path]:
@@ -170,14 +174,12 @@ def libero_exe(pytestconfig: pytest.Config) -> str:
     return found[-1]
 
 
-@pytest.fixture(scope="session")
-def libero(driver: LiberaQt, libero_exe: str):
-    """Libero SoC, past its startup prompt and settled.
+def _start_libero(driver: LiberaQt, libero_exe: str):
+    """Launch Libero and get past its startup prompt.
 
-    Libero asks about software updates before it will show a main window. The prompt is answered
-    with "No" -- "Yes" would reach out to the network -- and the "Do not remind me again" box is
-    deliberately left alone, because a test suite has no business changing a user's saved
-    settings. It is treated as optional so the fixture still works once somebody has ticked it.
+    Answers the update prompt with "No" -- "Yes" would reach out to the network -- and leaves the
+    "Do not remind me again" box alone, because a test suite has no business changing a user's
+    saved settings. The prompt is optional so this still works once somebody has ticked it.
     """
     app = driver.launch(libero_exe, timeout=240.0)
     try:
@@ -190,7 +192,75 @@ def libero(driver: LiberaQt, libero_exe: str):
     return app
 
 
+@pytest.fixture(scope="module")
+def libero_e2e(driver: LiberaQt, libero_exe: str, e2e_enabled):
+    """A Libero instance of its own for the end-to-end flow.
+
+    Deliberately not the session-scoped `libero`: opening a project rewrites the main window
+    title, which every fixture matching on "Libero" would then fail to find.
+    """
+    return _start_libero(driver, libero_exe)
+
+
+@pytest.fixture(scope="session")
+def libero(driver: LiberaQt, libero_exe: str):
+    """Libero SoC, past its startup prompt and settled, with no project open."""
+    return _start_libero(driver, libero_exe)
+
+
 @pytest.fixture(scope="session")
 def libero_main(libero):
     """Libero's main window."""
     return libero.window(title="Libero")
+
+
+# ------------------------------------------------------------------ end-to-end flow
+#
+# Opt-in: unlike everything else here it writes a Libero project to disk and drives a real tool
+# flow, so it must never run just because someone typed `pytest integration/`.
+
+
+@pytest.fixture(scope="session")
+def e2e_enabled(pytestconfig: pytest.Config) -> None:
+    """Gate the destructive flow behind an explicit flag."""
+    if not pytestconfig.getoption("--liberaqt-e2e"):
+        pytest.skip("end-to-end flow is opt-in; pass --liberaqt-e2e")
+
+
+@pytest.fixture(scope="session")
+def e2e_project_dir(pytestconfig: pytest.Config, e2e_enabled) -> Path:
+    """A short directory for the generated project.
+
+    Deliberately not tmp_path: pytest's temporary directories are long, and Libero puts up a
+    modal path-length warning that blocks every subsequent action.
+    """
+    directory = Path(pytestconfig.getoption("--liberaqt-e2e-dir"))
+    if len(str(directory)) > 40:
+        pytest.skip(f"--liberaqt-e2e-dir is too long for Libero: {directory}")
+    if directory.exists():
+        shutil.rmtree(directory, ignore_errors=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+@pytest.fixture(scope="session")
+def e2e_hdl_file(e2e_project_dir: Path) -> Path:
+    """A minimal synthesisable Verilog module for the import and synthesis steps."""
+    path = e2e_project_dir / "counter.v"
+    path.write_text(
+        "// Minimal synthesisable design used by the LiberaQT end-to-end test.\n"
+        "module counter (\n"
+        "    input  wire       clk,\n"
+        "    input  wire       rst_n,\n"
+        "    output reg  [7:0] count\n"
+        ");\n"
+        "    always @(posedge clk or negedge rst_n) begin\n"
+        "        if (!rst_n)\n"
+        "            count <= 8'd0;\n"
+        "        else\n"
+        "            count <= count + 8'd1;\n"
+        "    end\n"
+        "endmodule\n",
+        encoding="utf-8",
+    )
+    return path

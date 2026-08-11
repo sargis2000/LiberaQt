@@ -39,7 +39,8 @@ QStringList invokableSignatures(const QMetaObject *mo)
 
 } // namespace
 
-QVariant MetaInvoke::call(QObject *object, const QString &name, const QVariantList &args)
+QVariant MetaInvoke::call(QObject *object, const QString &name, const QVariantList &args,
+                          bool queued)
 {
     if (args.size() > MaxArgs) {
         throw CommandError(ErrorCode::InvalidParams,
@@ -108,6 +109,23 @@ QVariant MetaInvoke::call(QObject *object, const QString &name, const QVariantLi
         gen.append(QGenericArgument(typeNames.at(i).constData(), converted.at(i).constData()));
     while (gen.size() < MaxArgs)
         gen.append(QGenericArgument());
+
+    // Posting the call rather than making it. The handler returns at once, so a method that
+    // opens a modal dialog no longer holds its own reply hostage to the nested event loop that
+    // dialog runs. Nothing can be reported back about the outcome, hence the explicit opt-in.
+    if (queued) {
+        const bool ok = method.invoke(object, Qt::QueuedConnection,
+                                      gen[0], gen[1], gen[2], gen[3], gen[4],
+                                      gen[5], gen[6], gen[7], gen[8], gen[9]);
+        if (!ok) {
+            throw CommandError(ErrorCode::Internal,
+                               QStringLiteral("queueing %1::%2 failed").arg(className, name));
+        }
+        QVariantMap queuedOut;
+        queuedOut.insert(QStringLiteral("queued"), true);
+        queuedOut.insert(QStringLiteral("value"), QVariant());
+        return queuedOut;
+    }
 
     // Already marshalled onto the GUI thread by the dispatcher, so a direct call is correct
     // and keeps the return value usable.

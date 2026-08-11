@@ -237,7 +237,8 @@ void Dispatcher::registerBuiltins()
         // "__" names are operations Qt does not expose as slots; see WidgetBackend::synthetic.
         if (method.startsWith(QLatin1String("__")))
             return WidgetBackend::synthetic(object, method, args);
-        return MetaInvoke::call(object, method, args);
+        return MetaInvoke::call(object, method, args,
+                                params.value(QStringLiteral("queued")).toBool());
     });
 
     // TODO(m1): object.list_properties, quick.*, widget.*, record.*
