@@ -85,4 +85,16 @@ inline bool convert(QVariant &v, int typeId)
 #endif
 }
 
+// QMetaMethod::parameterTypeName() arrived in Qt 6. Qt 5 only offers the whole list at once,
+// which allocates, so callers that need several should hoist parameterTypes() themselves.
+inline QByteArray parameterTypeName(const QMetaMethod &method, int index)
+{
+#if LIBERAQT_QT6
+    return method.parameterTypeName(index);
+#else
+    const QList<QByteArray> types = method.parameterTypes();
+    return index >= 0 && index < types.size() ? types.at(index) : QByteArray();
+#endif
+}
+
 } // namespace liberaqt::compat

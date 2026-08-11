@@ -97,10 +97,10 @@ QVariant MetaInvoke::call(QObject *object, const QString &name, const QVariantLi
             throw CommandError(ErrorCode::InvalidParams,
                                QStringLiteral("argument %1 of '%2' must be %3")
                                    .arg(i).arg(name,
-                                        QString::fromUtf8(method.parameterTypeName(i))));
+                                        QString::fromUtf8(compat::parameterTypeName(method, i))));
         }
         converted.append(value);
-        typeNames.append(method.parameterTypeName(i));
+        typeNames.append(compat::parameterTypeName(method, i));
     }
 
     QVarLengthArray<QGenericArgument, MaxArgs> gen;
