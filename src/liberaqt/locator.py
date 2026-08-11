@@ -134,13 +134,14 @@ class Locator:
         Unlike the rest of the class this is eager, and the returned locators are bound to the
         handles found at this moment rather than re-resolving later.
 
-        Returns:
-            One locator per matching object, in tree order.
+        No match is an empty list, not an error: this is the plural form, and it is the same
+        question :attr:`count` answers with zero. Looping over "however many there are" must not
+        have to be written inside a try.
 
-        Raises:
-            ObjectNotFoundError: Nothing matched.
+        Returns:
+            One locator per matching object, in tree order. Empty when nothing matched.
         """
-        handles = self._find(limit=0)
+        handles = self._find(limit=0, allow_empty=True)
         return [_HandleLocator(self._session, self._selector, h) for h in handles]
 
     def __iter__(self) -> Iterator[Locator]:

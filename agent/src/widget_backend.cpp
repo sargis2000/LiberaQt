@@ -548,9 +548,16 @@ QVariantMap WidgetBackend::tabSelect(QObject *object, const QVariantMap &params)
                 break;
             }
         }
-        if (target < 0)
+        if (target < 0) {
+            // Listing what is there turns a failed lookup into a usable diagnosis, the same way
+            // the menu walker does.
+            QStringList available;
+            for (int i = 0; i < count; ++i)
+                available.append(bar ? bar->tabText(i) : tabs->tabText(i));
             throw CommandError(ErrorCode::NotFound,
-                               QStringLiteral("no tab labelled '%1'").arg(wanted));
+                               QStringLiteral("no tab labelled '%1'; there is: %2")
+                                   .arg(wanted, available.join(QStringLiteral(", "))));
+        }
     } else {
         target = params.value(QStringLiteral("index"), -1).toInt();
         if (target < 0 || target >= count) {
