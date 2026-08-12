@@ -13,20 +13,27 @@ Two things learned the hard way and encoded below:
 * **Keep the project path short.** Windows MAX_PATH; a deep temp directory triggers the warning
   dialog and everything after it blocks.
 
-The flow also leans on two workarounds for gaps in the agent, both flagged where they occur:
-`widget.menu_trigger` is unimplemented so menu items are reached through `QAction::trigger`, and
-`widget.select_item` is unimplemented so a row is selected with a keypress.
+* **Give the project a unique name.** Libero refuses one that already exists, and a leftover
+  directory is easy to end up with because a previous run may still hold its files open. The
+  refusal surfaces as an unexpected dialog, not as an error from the step that caused it.
 """
 
+import os
 import time
 
 import pytest
 
 from liberaqt import expect
 
-#: A part that exists in every SmartFusion2 installation, chosen from the 80 the wizard lists.
-PROJECT_NAME = "liberaqt_e2e"
+#: Unique per run. Libero refuses to create a project whose name already exists, and a leftover
+#: directory is easy to end up with: a previous run's Libero may still hold files open, so the
+#: cleanup silently does nothing. Reusing the name turned that into "device families did not
+#: load" three steps later, rather than the actual complaint.
+PROJECT_NAME = f"lqt_{os.getpid()}"
 HDL_MODULE = "counter"
+
+#: One of the 80 parts the wizard lists for SmartFusion2.
+PART = "M2S005-1TQ144"
 
 
 def _windows(app):
@@ -37,6 +44,21 @@ def _windows(app):
 def _settle(app, seconds=1.5, timeout=60.0):
     app.wait_for_idle(timeout=timeout)
     time.sleep(seconds)
+
+
+def _assert_no_unexpected_dialog(app, expected):
+    """Fail with what Libero is actually saying, rather than three steps later.
+
+    Libero interposes dialogs for things a test cannot anticipate -- a name that already exists,
+    a path that is too long. Left unread, the next assertion fails for a reason that has nothing
+    to do with the real cause.
+    """
+    for title, window in _windows(app).items():
+        if title in expected or title.startswith("Libero"):
+            continue
+        labels = [label.text for label in window.locator("QLabel").all()
+                  if label.text and label.is_visible]
+        raise AssertionError(f"unexpected dialog {title!r}: {labels[:3]}")
 
 
 def _main(app):
@@ -53,10 +75,9 @@ def project(libero_e2e, e2e_project_dir, e2e_hdl_file):
     app = libero_e2e
     win = _main(app)
 
-    # Menus: widget.menu_trigger is not implemented, but QAction::trigger is an ordinary slot.
-    # It must be queued -- the wizard is modal, so a direct call would not return until it closes
-    # and the reply would be stranded for as long as the dialog is up.
-    win.locator("QAction[text='New Project']").invoke("trigger", queued=True)
+    # Menu activation is queued by the agent, because the wizard is modal and a direct trigger
+    # would not return until it closed -- stranding the reply for as long as it was up.
+    win.menu("Project > New Project").trigger()
     time.sleep(4)
 
     assert "New project" in _windows(app), f"wizard did not open: {list(_windows(app))}"
@@ -66,15 +87,16 @@ def project(libero_e2e, e2e_project_dir, e2e_hdl_file):
     dlg.locator("QLineEdit#projLocationLineEdit").fill(str(e2e_project_dir))
     dlg.locator("QPushButton[text='Next >']").click()
     _settle(app, 2.0)
+    _assert_no_unexpected_dialog(app, {"New project"})
 
     # Device selection. The combos are empty until this page is entered -- Qt builds every wizard
     # page up front, but Libero only populates them on the page it is showing.
     assert dlg.locator("QComboBox#dieComboBox")["count"] > 0, "device families did not load"
 
-    # widget.select_item is not implemented, so focus the view and let Qt move the current row.
+    # Naming the part beats pressing Down: the test says which device it means, and stops
+    # depending on whatever the list happens to be sorted by.
     parts = dlg.locator("QTreeView#partView")
-    parts.click()
-    parts.press("Down")
+    parts.select_item(text=PART)
     _settle(app, 1.0, timeout=30.0)
     assert dlg.locator("QPushButton[text='Next >']").is_enabled, "no part got selected"
 
@@ -119,7 +141,7 @@ def test_import_an_hdl_source_file(project, e2e_hdl_file):
     """Libero's file dialog is a Qt QFileDialog, not the native one, so it is drivable."""
     app = project
     win = _main(app)
-    win.locator("QAction[text='HDL Source Files']").invoke("trigger", queued=True)
+    win.menu("File > Import > HDL Source Files").trigger()
     time.sleep(4)
 
     assert "Import Files" in _windows(app), list(_windows(app))

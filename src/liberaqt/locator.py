@@ -624,6 +624,7 @@ class Locator:
             UnsupportedOperationError: The object is not a model-backed view.
         """
         return self._session.call(Cmd.MODEL_DATA, {"handle": self.resolve()}).get("rows", [])
+        
 
     def row(self, has_text: str | None = None, index: int | None = None) -> Locator:
         """Locate a row in an item view.
@@ -693,3 +694,6 @@ class _HandleLocator(Locator):
 
     def __repr__(self) -> str:
         return f"<Locator handle={self._handle} from {self._selector}>"
+
+
+

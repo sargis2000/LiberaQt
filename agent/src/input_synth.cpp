@@ -6,6 +6,7 @@
 
 #include <QAbstractScrollArea>
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMouseEvent>
@@ -111,6 +112,10 @@ QVariantMap InputSynth::click(ObjectRegistry &registry, const QVariantMap &param
 
     const QPoint global = widget->mapToGlobal(point);
 
+    // Sent, not posted. Posting looks more like real input and would sidestep the nested-loop
+    // problem below, but it measurably breaks applications that expect the click to have landed
+    // by the time the next command arrives -- Libero's wizard stops advancing. Delivery order and
+    // timing matter more here than theoretical fidelity.
     for (int i = 0; i < count; ++i) {
         const QEvent::Type pressType = (i == 1) ? QEvent::MouseButtonDblClick
                                                 : QEvent::MouseButtonPress;
@@ -118,6 +123,17 @@ QVariantMap InputSynth::click(ObjectRegistry &registry, const QVariantMap &param
         QApplication::sendEvent(widget, &press);
         QMouseEvent release(QEvent::MouseButtonRelease, point, global, button, Qt::NoButton, mods);
         QApplication::sendEvent(widget, &release);
+    }
+
+    // A context menu is not derived from the mouse event: on a real right-click the platform
+    // sends a separate QContextMenuEvent, and without one a synthesised right-click selects the
+    // item and nothing more. This one *is* posted, because showing a context menu runs a nested
+    // event loop -- sending it would not return until the menu was dismissed, stranding the reply
+    // for exactly as long as the menu was on screen.
+    if (button == Qt::RightButton) {
+        QApplication::postEvent(widget,
+                                new QContextMenuEvent(QContextMenuEvent::Mouse, point, global,
+                                                      mods));
     }
 
     // TODO(m1): route through QWindowSystemInterface::handleMouseEvent instead, so that grabs,
@@ -242,7 +258,7 @@ QVariantMap pressOrRelease(ObjectRegistry &registry, const QVariantMap &params, 
     const Qt::MouseButton button = parseButton(params.value(QStringLiteral("button")).toString());
     const Qt::KeyboardModifiers mods =
         parseModifiers(params.value(QStringLiteral("modifiers")).toList());
-    // A press reports the button as held; a release reports nothing still down.
+    // Sent, matching click(). A press reports the button as held; a release reports none down.
     QMouseEvent event(down ? QEvent::MouseButtonPress : QEvent::MouseButtonRelease,
                       point, widget->mapToGlobal(point), button,
                       down ? button : Qt::NoButton, mods);
