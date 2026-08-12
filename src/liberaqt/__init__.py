@@ -70,12 +70,17 @@ class LiberaQt:
         default_timeout: Seconds each action waits for its target to become actionable.
         slowmo: Seconds to sleep before every command. Useful for watching a test run.
         trace: Whether to log every protocol message, for debugging the driver itself.
+        input_mode: How input reaches the application; see
+            :meth:`~liberaqt.application.Application.set_input_mode`. ``None`` leaves the agent on
+            its own default, which is ``"native"``, and costs no round trip.
     """
 
-    def __init__(self, default_timeout: float = 5.0, slowmo: float = 0.0, trace: bool = False):
+    def __init__(self, default_timeout: float = 5.0, slowmo: float = 0.0, trace: bool = False,
+                 input_mode: str | None = None):
         self.default_timeout = default_timeout
         self.slowmo = slowmo
         self.trace = trace
+        self.input_mode = input_mode
         self._apps: list[Application] = []
 
     # ------------------------------------------------------------------ launching
@@ -119,7 +124,7 @@ class LiberaQt:
         session = Session(transport, ObjectMap.load(object_map),
                           default_timeout=self.default_timeout, slowmo=self.slowmo)
         app = Application(session, process)
-        self._apps.append(app)
+        self._register(app)
         return app
 
     def connect(self, port: int, token: str = "", object_map: str | None = None) -> Application:
@@ -145,8 +150,14 @@ class LiberaQt:
         session = Session(transport, ObjectMap.load(object_map),
                           default_timeout=self.default_timeout, slowmo=self.slowmo)
         app = Application(session)
-        self._apps.append(app)
+        self._register(app)
         return app
+
+    def _register(self, app: Application) -> None:
+        """Track an application for cleanup, and apply the session-wide options to it."""
+        self._apps.append(app)
+        if self.input_mode is not None:
+            app.set_input_mode(self.input_mode)
 
     # ------------------------------------------------------------------ settings
     def set_default_timeout(self, timeout: float) -> None:

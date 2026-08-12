@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .errors import LiberaQtError
+from .errors import LiberaQtError, UnsupportedOperationError
 from .protocol import Cmd, Event
 from .session import Session
 from .waits import retry
@@ -67,6 +67,36 @@ class Application:
         if self._process is not None:
             return self._process.is_running
         return self._session.transport.is_connected
+
+    # ------------------------------------------------------------------ settings
+    def set_input_mode(self, mode: str) -> None:
+        """Choose how mouse and keyboard events reach the application.
+
+        ``"native"``, the default, hands each event to Qt at the same seam a platform plugin uses,
+        so Qt routes it exactly as it routes a real one: it hit-tests for the receiver, tracks
+        hover and enter/leave, holds the implicit grab between press and release, derives double
+        clicks, moves focus to what was clicked, and refuses input to a window a modal dialog has
+        disabled. Anything a person could not do -- clicking a widget that is scrolled out of
+        sight, typing into a field behind a modal -- fails instead of quietly succeeding.
+
+        ``"synthetic"`` delivers each event straight to one widget instead. None of the above
+        happens, so a click does not focus what it hits and typing afterwards goes nowhere; in
+        exchange it still reaches a target that is off-screen or covered. Useful for setting up
+        state, and as an escape hatch when a target cannot be reached any other way.
+
+        Args:
+            mode: ``"native"`` or ``"synthetic"``.
+
+        Raises:
+            UnsupportedOperationError: The agent predates this option, so the mode it is using is
+                not the one that was asked for.
+        """
+        result = self._session.call(Cmd.SET_OPTIONS, {"input_mode": mode}) or {}
+        if "input_mode" not in (result.get("accepted") or []):
+            raise UnsupportedOperationError(
+                f"this agent ignores input_mode, so it is not running in {mode!r} mode; "
+                "rebuild the agent to choose the input delivery mode"
+            )
 
     # ------------------------------------------------------------------ windows
     @property

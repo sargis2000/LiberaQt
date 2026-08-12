@@ -298,10 +298,16 @@ class Locator:
         self._act(Cmd.HOVER, timeout=timeout)
 
     def fill(self, text: str, timeout: float | None = None) -> None:
-        """Clear and set text in one shot.
+        """Clear and set text in one shot, by writing the property.
 
-        Fast, but sets the text directly rather than emitting per-key events. Use :meth:`type`
-        where the application reacts to individual keystrokes, such as a search-as-you-type box.
+        The one action here that is deliberately not user input: it writes ``text`` directly
+        instead of typing, so nothing the application does *per keystroke* happens -- no
+        ``textEdited``, no completer popup, no input mask, no per-key validator, no
+        ``keyPressEvent`` override. Use it to set up state you are not testing, and :meth:`type`
+        when the typing is the thing under test.
+
+        A read-only field is refused rather than written to. Succeeding where a user could never
+        have typed is a false pass, and a silent one.
 
         Args:
             text: Text to set. Empty clears the field.
@@ -310,7 +316,11 @@ class Locator:
         self._act(Cmd.SET_TEXT, {"text": text}, timeout=timeout)
 
     def type(self, text: str, delay: float = 0.0, timeout: float | None = None) -> None:
-        """Type character by character with real key events.
+        """Type character by character, as a person would.
+
+        Each character is a real press and release carrying both a key code and its text, so
+        shortcuts, type-ahead and key handlers all see it. Unlike :meth:`fill` this cannot write
+        into a field the user could not type into.
 
         Args:
             text: Text to type.

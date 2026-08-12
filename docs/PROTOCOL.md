@@ -65,6 +65,13 @@ Such commands resolve later, from the event loop:
   firing inside a nested loop, so the reply still arrives with a modal dialog open.
 * `sync.wait_signal` — the point is to let the application run until it emits.
 
+* `input.*` — every one of them except `input.set_text`. They queue their events rather than
+  delivering them, so they answer two zero-delay timer turns later, once the queue has drained.
+  Replying sooner would race the application: the client's next command could arrive before the
+  click had been handled, which is exactly how a synthesised click ends up looking as though
+  nothing happened. Two turns rather than one because whether the window-system queue is drained
+  before or after zero-timers fire within a single pass is a property of the platform dispatcher.
+
 Two more commands avoid the same trap by *posting* their work and answering immediately, which
 necessarily discards the result:
 
@@ -72,9 +79,7 @@ necessarily discards the result:
   triggering a menu `QAction`. Returns `{"queued": true}` and no value.
 * `widget.menu_trigger` — always queued, for the same reason.
 
-Nothing else may block. `input.*` currently delivers events synchronously with
-`QApplication::sendEvent`, which means clicking a button whose handler opens a modal dialog will
-strand that reply (`TODO(m1)`).
+Nothing else may block.
 
 ## 2. Error codes
 
@@ -106,7 +111,14 @@ debuggable without re-running under a spy.
 | `session.info` | – | qt version, platform, pid, loaded modules |
 | `session.ping` | – | `{"pong": true}` |
 | `session.quit` | `{"force": bool}` | closes the AUT |
-| `session.set_options` | `{"idle_poll_ms", "animation_wait", "network_wait"}` | `{"accepted": [...]}` — registered but currently a no-op: it echoes the keys and changes nothing. Unknown keys are ignored rather than rejected, so a newer client can talk to an older agent. |
+| `session.set_options` | `{"input_mode": "native"\|"synthetic"}` | `{"accepted": [...]}` |
+
+`accepted` lists the keys that were actually **applied**, not the ones that were sent: unknown keys
+are ignored rather than rejected, so a newer client can talk to an older agent, and comparing the
+two is how it finds out. Only `input_mode` is honoured so far — `idle_poll_ms`, `animation_wait`
+and `network_wait` are accepted by older clients and silently dropped. An unparseable value is an
+`invalid_params` error rather than a silent fallback, because the alternative is a suite that
+believes it is testing one thing and is testing another.
 
 ### Discovery
 
@@ -173,6 +185,46 @@ prefix and handled before meta-object lookup:
 | `input.type_text` | `{"handle"?, "text", "delay_ms"}` |
 | `input.set_text` | `{"handle", "text"}` (fast path: clear + set + commit signals) |
 
+Every command above also accepts `"mode"`, overriding the session default for one call.
+
+#### Delivery modes
+
+`native`, the default, hands each event to Qt through `QWindowSystemInterface` — the seam a
+platform plugin pushes real input through. Qt then does everything it does for a user: it
+hit-tests for the receiver, tracks hover and enter/leave, holds the implicit grab between press
+and release, derives a double click from two nearby presses, dismisses popups, moves focus to
+whatever was clicked, and refuses input to a window a modal dialog has disabled. Widgets see
+`spontaneous()` events.
+
+Consequences worth knowing:
+
+* A press on an inactive window **activates it first**, as the platform would. Without this the
+  application stays permanently in the background whatever the test clicks: `activeWindow()` stays
+  null and window-context shortcuts — nearly all of them — silently match nothing. Not done past a
+  modal dialog, where a user could not do it either.
+* A chord is pressed the way a hand presses it: modifiers down, key, key up, modifiers up.
+* `input.type_text` sends a key code as well as the text for each character, because widgets read
+  whichever they need — a `QLineEdit` inserts `text()`, while shortcuts, type-ahead and every
+  `keyPressEvent` override switch on `key()`.
+* No `MouseButtonDblClick` is ever sent: `"count": 2` queues two press/release pairs and lets Qt
+  derive the double click, as it does for a user.
+* Keys are aimed at a *window*, and Qt hands them to its focus object. `QApplication::focusWidget()`
+  is deliberately not consulted — it is null whenever the application is not the foreground one,
+  which is the normal state of one under test.
+
+`synthetic` sends each event straight at one widget with `QApplication::sendEvent`. The widget's
+own handler runs, but none of the routing above does — most visibly, a click does not focus what
+it hits, so typing afterwards goes wherever focus already was. It is kept because it still reaches
+a target a user could not: one scrolled out of view, covered, or on a window parked off-screen
+(Qt does that to a tabified `QDockWidget` whose tab is not current, and such a widget still reports
+`isVisible()`).
+
+`session.set_options({"input_mode": ...})` sets the session default.
+
+`input.set_text` is in neither mode: it writes the `text` / `plainText` / `currentText` property
+directly. It is the one deliberately non-user-input command, for setting up state cheaply — but it
+refuses a read-only widget, because writing where a user could not type is a false pass.
+
 `input.press` and `input.release` carry both halves of the API deliberately: `Keyboard.down/up`
 sends `key`, `Mouse.down/up` sends `button`, and to the caller they are one idea — hold something
 down. The agent picks by which parameter is present. `input.drag` likewise accepts a target object
@@ -182,11 +234,13 @@ Default click position is the object's visual centre, mapped to window coordinat
 `QWidget::mapTo` / `QQuickItem::mapToScene`. When the handle names a cell (see below), the centre
 is the cell's, and the view is scrolled to bring it on screen first.
 
-`input.wheel` is delivered to a scroll area's viewport rather than the area itself, because
-`QAbstractScrollArea` ignores wheel events sent to the frame.
+On the synthetic path `input.wheel` and mouse events are redirected to a scroll area's viewport,
+because `QAbstractScrollArea` ignores events sent to the frame. The native path needs no such
+special case: Qt hit-tests to the viewport itself.
 
 > Not yet true: obscured-centre adjustment. The agent does not currently detect an obscuring
-> sibling, so a covered object is clicked at its centre regardless (`TODO(m1)`).
+> sibling, so a covered object is clicked at its centre regardless (`TODO(m1)`). In native mode
+> the click then lands on whatever is actually in front, which at least fails visibly.
 
 ### Widgets and models
 

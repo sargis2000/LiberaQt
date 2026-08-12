@@ -61,6 +61,11 @@ public:
 private:
     void registerBuiltins();
 
+    // An input command, whose handler queues events rather than delivering them. Registered
+    // asynchronously so the reply waits until the queue has been drained -- see the comment on
+    // the definition for why replying immediately is a bug and not an optimisation.
+    void registerInputCommand(const QString &name, Handler handler);
+
     ObjectRegistry &m_registry;
     QMap<QString, Handler> m_handlers;
     QMap<QString, AsyncHandler> m_asyncHandlers;

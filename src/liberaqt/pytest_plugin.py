@@ -30,6 +30,8 @@ def pytest_addoption(parser: Any) -> None:
                     help="seconds to sleep before each command, for debugging")
     group.addoption("--liberaqt-timeout", type=float, default=5.0, help="default action timeout")
     group.addoption("--liberaqt-trace", action="store_true", help="log every protocol message")
+    group.addoption("--liberaqt-input-mode", choices=("native", "synthetic"), default=None,
+                    help="how input reaches the application; native behaves like a real user")
 
 
 def _load_config(rootdir: Path) -> dict[str, Any]:
@@ -67,6 +69,8 @@ def liberaqt_config(pytestconfig: Any) -> dict[str, Any]:
         cfg["qt"] = pytestconfig.getoption("--liberaqt-qt")
     if pytestconfig.getoption("--liberaqt-headless"):
         cfg["headless"] = True
+    if pytestconfig.getoption("--liberaqt-input-mode"):
+        cfg["input_mode"] = pytestconfig.getoption("--liberaqt-input-mode")
     cfg.setdefault("executable", os.environ.get("LIBERAQT_EXE"))
     cfg.setdefault("timeout", pytestconfig.getoption("--liberaqt-timeout"))
     return cfg
@@ -87,6 +91,7 @@ def liberaqt(pytestconfig: Any, liberaqt_config: dict[str, Any]):
         default_timeout=float(liberaqt_config.get("timeout", 5.0)),
         slowmo=pytestconfig.getoption("--liberaqt-slowmo"),
         trace=pytestconfig.getoption("--liberaqt-trace"),
+        input_mode=liberaqt_config.get("input_mode"),
     )
     yield driver
     driver.close()

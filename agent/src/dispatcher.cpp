@@ -15,6 +15,7 @@
 #include <memory>
 
 #include <QCoreApplication>
+#include <QStringList>
 #include <QTimer>
 #include <QVariantList>
 
@@ -45,6 +46,27 @@ void Dispatcher::registerCommand(const QString &name, Handler handler)
 void Dispatcher::registerAsyncCommand(const QString &name, AsyncHandler handler)
 {
     m_asyncHandlers.insert(name, std::move(handler));
+}
+
+// Input handlers only *queue* their events: native input goes into the window-system queue, which
+// the platform event dispatcher drains on its next pass. Answering straight away would race the
+// application -- the client's next command could arrive before the click had been handled, which
+// is exactly how a synthesised click ends up looking as though nothing happened at all. So every
+// input command is asynchronous and replies once the queue has been drained.
+//
+// Two turns rather than one, because whether "flush the window-system queue" comes before or
+// after "fire zero-timers" within a single pass is a property of the platform dispatcher, not
+// something worth depending on. Neither turn costs wall-clock time. A nested event loop -- the
+// modal dialog the click just opened -- runs zero-timers too, so the reply is never stranded.
+void Dispatcher::registerInputCommand(const QString &name, Handler handler)
+{
+    registerAsyncCommand(name, [handler](const QVariantMap &params, Resolver resolve, Rejecter) {
+        // Throwing here is fine: handle() wraps the call and turns it into a rejection.
+        const QVariant result = handler(params);
+        QTimer::singleShot(0, qApp, [resolve, result] {
+            QTimer::singleShot(0, qApp, [resolve, result] { resolve(result); });
+        });
+    });
 }
 
 namespace {
@@ -335,37 +357,35 @@ void Dispatcher::registerBuiltins()
     });
 
     // ---- input -----------------------------------------------------------
-    registerCommand(QStringLiteral("input.click"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.click"), [this](const QVariantMap &params) {
         return InputSynth::click(m_registry, params);
     });
-    registerCommand(QStringLiteral("input.hover"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.hover"), [this](const QVariantMap &params) {
         return InputSynth::hover(m_registry, params);
     });
-    registerCommand(QStringLiteral("input.key"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.key"), [this](const QVariantMap &params) {
         return InputSynth::key(m_registry, params);
     });
-    registerCommand(QStringLiteral("input.type_text"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.type_text"), [this](const QVariantMap &params) {
         return InputSynth::typeText(m_registry, params);
     });
-    registerCommand(QStringLiteral("input.set_text"), [this](const QVariantMap &params) -> QVariant {
-        return InputSynth::setText(m_registry, params);
-    });
-
-    // ---- visual ----------------------------------------------------------
-    registerCommand(QStringLiteral("input.press"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.press"), [this](const QVariantMap &params) {
         return InputSynth::press(m_registry, params);
     });
-
-    registerCommand(QStringLiteral("input.release"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.release"), [this](const QVariantMap &params) {
         return InputSynth::release(m_registry, params);
     });
-
-    registerCommand(QStringLiteral("input.wheel"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.wheel"), [this](const QVariantMap &params) {
         return InputSynth::wheel(m_registry, params);
     });
-
-    registerCommand(QStringLiteral("input.drag"), [this](const QVariantMap &params) -> QVariant {
+    registerInputCommand(QStringLiteral("input.drag"), [this](const QVariantMap &params) {
         return InputSynth::drag(m_registry, params);
+    });
+
+    // Not input, despite the name: it writes a property. Nothing is queued, so it stays
+    // synchronous -- see the note on InputSynth::setText.
+    registerCommand(QStringLiteral("input.set_text"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::setText(m_registry, params);
     });
 
     // ---- properties ------------------------------------------------------
@@ -387,10 +407,23 @@ void Dispatcher::registerBuiltins()
 
     registerCommand(QStringLiteral("session.set_options"),
                     [](const QVariantMap &params) -> QVariant {
-        // Session options are advisory; unknown keys are ignored rather than rejected so that a
-        // newer client can talk to an older agent without failing outright.
+        // Unknown keys are ignored rather than rejected, so a newer client can talk to an older
+        // agent without failing outright. "accepted" therefore reports what was actually applied,
+        // not what was sent -- that difference is how a client can tell the two apart.
+        QStringList accepted;
+        const QString inputMode = params.value(QStringLiteral("input_mode")).toString();
+        if (!inputMode.isEmpty()) {
+            InputSynth::Mode mode = InputSynth::Mode::Native;
+            if (!InputSynth::parseMode(inputMode, &mode)) {
+                throw CommandError(ErrorCode::InvalidParams,
+                                   QStringLiteral("unknown input_mode '%1'; expected 'native' or "
+                                                  "'synthetic'").arg(inputMode));
+            }
+            InputSynth::setMode(mode);
+            accepted << QStringLiteral("input_mode");
+        }
         QVariantMap out;
-        out.insert(QStringLiteral("accepted"), QVariant(params.keys()));
+        out.insert(QStringLiteral("accepted"), accepted);
         return out;
     });
 

@@ -33,12 +33,10 @@ Known gaps, in the order they unblock the most client surface:
 
 * `quick.evaluate`, `quick.find_by_id`, `quick.list_view_item`, `quick.wait_animations` — all QML
 * `record.start` / `record.stop` — the recorder, and therefore `liberaqt record`
-* `session.set_options` is registered but a **no-op**: it echoes its keys and changes nothing
+* `session.set_options` honours `input_mode` and nothing else; `idle_poll_ms`, `animation_wait`
+  and `network_wait` are accepted and dropped
 * `__scroll_into_view` is unimplemented; actionability does not detect obscuring widgets or modal
   dialogs (`TODO(m1)` in `widget_backend.cpp`)
-* `input.*` still uses `QApplication::sendEvent`, so clicking a button whose handler opens a modal
-  dialog strands that reply — the last instance of the root cause `sync.wait_idle` and
-  `object.invoke` were both fixed for
 
 Item views, menus, tabs, the remaining input events, property enumeration and `sync.wait_signal`
 are all implemented; a cell is addressed by the composite handle described in `docs/PROTOCOL.md`.
@@ -221,6 +219,31 @@ them with no Qt installed.
 The agent is an RCE surface by design: loopback only, token required, one client, dormant without
 the token. It must never ship in a production build.
 
+## Input model
+
+Input is delivered through `QWindowSystemInterface`, the seam a platform plugin pushes real input
+through, so Qt routes it exactly as it routes a user's: hit-testing, hover, the implicit grab
+between press and release, double-click derivation, popup dismissal, focus-on-click, and modal
+blocking. Widgets see `spontaneous()` events. `session.set_options({"input_mode": "synthetic"})`
+switches back to `QApplication::sendEvent` aimed at one widget, which skips all of that but still
+reaches a target a user could not — off-screen, covered, or in a tabified dock parked at negative
+coordinates while its tab is not current.
+
+Three consequences that are easy to rediscover the hard way:
+
+* **A press activates an inactive window first.** Without it the application stays in the
+  background however hard the test clicks, `QApplication::activeWindow()` stays null, and
+  window-context shortcuts — nearly all of them — match nothing.
+* **`QApplication::focusWidget()` is null whenever the application is not the foreground one**,
+  which is normal for an application under test and guaranteed when several are running. So keys
+  are aimed at a *window* (Qt hands them to its focus object), and tests must assert on where
+  typing lands rather than on `hasFocus()`.
+* **Every `input.*` command is asynchronous**, because it queues rather than delivers. Replying
+  before the queue drains lets the next command race the click.
+
+`input.set_text` is the deliberate exception: it writes the property, for cheap setup. It refuses
+a read-only widget, because succeeding where a user could not type is a false pass.
+
 ## Auto-wait model
 
 Every action: resolve the selector to exactly one object (retry at 50 ms) → check actionability
@@ -246,7 +269,7 @@ per-application fixtures on top of `LiberaQt` directly.
 
 Fixtures: `app` (per-test Application), `app_session` (session-scoped), `win`, `liberaqt`,
 `liberaqt_config`. Options: `--liberaqt-exe`, `--liberaqt-qt`, `--liberaqt-headless`,
-`--liberaqt-slowmo`, `--liberaqt-timeout`, `--liberaqt-trace`. Config comes from
+`--liberaqt-slowmo`, `--liberaqt-timeout`, `--liberaqt-trace`, `--liberaqt-input-mode`. Config comes from
 `<rootdir>/liberaqt.toml` under `[liberaqt]`. On failure the plugin writes a screenshot and the
 last protocol messages to `liberaqt-trace/`.
 
