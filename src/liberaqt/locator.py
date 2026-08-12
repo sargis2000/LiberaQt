@@ -639,7 +639,10 @@ class Locator:
         Raises:
             ObjectNotFoundError: No row matched.
         """
-        params = {"handle": self.resolve(), "text": has_text, "row": index}
+        # "has_text" means containing, matching filter(has_text=...) and the docstring above.
+        # select_item() deliberately stays exact: choosing "Widget" should not select "Widgets".
+        params = {"handle": self.resolve(), "text": has_text, "row": index,
+                  "match": "contains"}
         result = self._session.call(Cmd.ITEM_RECT, params)
         return _HandleLocator(self._session, self._selector, result["handle"])
 

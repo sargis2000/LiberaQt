@@ -279,14 +279,15 @@ int columnFor(QAbstractItemModel *model, const QVariant &column)
 // rows are. Every column is searched too: callers name a cell by what they can see, and which
 // column it happens to live in is a detail they should not have to know.
 QModelIndex searchByText(QAbstractItemModel *model, const QModelIndex &parent,
-                         const QString &wanted)
+                         const QString &wanted, bool contains)
 {
     const int rows = model->rowCount(parent);
     const int columns = model->columnCount(parent);
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < columns; ++c) {
             const QModelIndex index = model->index(r, c, parent);
-            if (model->data(index, Qt::DisplayRole).toString() == wanted)
+            const QString text = model->data(index, Qt::DisplayRole).toString();
+            if (contains ? text.contains(wanted) : text == wanted)
                 return index;
         }
         // Children hang off column 0, whatever the matching column turns out to be.
@@ -298,7 +299,7 @@ QModelIndex searchByText(QAbstractItemModel *model, const QModelIndex &parent,
         if (model->canFetchMore(first))
             model->fetchMore(first);
         if (model->hasChildren(first)) {
-            const QModelIndex found = searchByText(model, first, wanted);
+            const QModelIndex found = searchByText(model, first, wanted, contains);
             if (found.isValid())
                 return found;
         }
@@ -318,7 +319,10 @@ QModelIndex findIndex(QAbstractItemView *view, const QVariantMap &params)
 
     if (text.isValid() && !text.isNull()) {
         const QString wanted = text.toString();
-        const QModelIndex found = searchByText(model, QModelIndex(), wanted);
+        // row(has_text=) means containing; select_item(text=) means exactly.
+        const bool contains =
+            params.value(QStringLiteral("match")).toString() == QLatin1String("contains");
+        const QModelIndex found = searchByText(model, QModelIndex(), wanted, contains);
         if (found.isValid())
             return found;
         throw CommandError(ErrorCode::NotFound, QStringLiteral("no item reads '%1'").arg(wanted));
