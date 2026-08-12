@@ -31,12 +31,17 @@ from the client.
 
 Known gaps, in the order they unblock the most client surface:
 
-* `widget.item_rect`, `widget.select_item` — item views (`row()`, `select_item`, `select_option`)
-* `input.wheel`, `input.drag` — scrolling, drag-and-drop
-* `object.list_properties` — `properties()`, and richer `liberaqt inspect`
-* `sync.wait_signal`, `widget.menu_trigger`, `widget.tab_select`, `input.press` / `input.release`
+* `quick.evaluate`, `quick.find_by_id`, `quick.list_view_item`, `quick.wait_animations` — all QML
+* `record.start` / `record.stop` — the recorder, and therefore `liberaqt record`
+* `session.set_options` is registered but a **no-op**: it echoes its keys and changes nothing
 * `__scroll_into_view` is unimplemented; actionability does not detect obscuring widgets or modal
   dialogs (`TODO(m1)` in `widget_backend.cpp`)
+* `input.*` still uses `QApplication::sendEvent`, so clicking a button whose handler opens a modal
+  dialog strands that reply — the last instance of the root cause `sync.wait_idle` and
+  `object.invoke` were both fixed for
+
+Item views, menus, tabs, the remaining input events, property enumeration and `sync.wait_signal`
+are all implemented; a cell is addressed by the composite handle described in `docs/PROTOCOL.md`.
 
 **QML works better than it looks, and the gap is narrower than "deferred" suggests.** Measured
 against `qmleasing` (a real Qt app with a Quick window):

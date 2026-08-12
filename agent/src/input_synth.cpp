@@ -219,26 +219,50 @@ QVariantMap InputSynth::setText(ObjectRegistry &registry, const QVariantMap &par
                            .arg(QString::fromUtf8(object->metaObject()->className())));
 }
 
+namespace {
+
+// press/release serve both halves of the API: Keyboard.down/up send "key", Mouse.down/up send
+// "button". One command, because to the caller they are the same idea -- hold something down --
+// and splitting them would mean two names for one concept on the wire.
+QVariantMap pressOrRelease(ObjectRegistry &registry, const QVariantMap &params, bool down)
+{
+    const QVariant key = params.value(QStringLiteral("key"));
+    if (key.isValid() && !key.toString().isEmpty()) {
+        int keyCode = 0;
+        Qt::KeyboardModifiers mods;
+        parseChord(key.toString(), &keyCode, &mods);
+        QWidget *target = keyTarget(registry, params);
+        QKeyEvent event(down ? QEvent::KeyPress : QEvent::KeyRelease, keyCode, mods);
+        QApplication::sendEvent(target, &event);
+        return {};
+    }
+
+    QPoint point;
+    QWidget *widget = targetWidget(registry, params, &point);
+    const Qt::MouseButton button = parseButton(params.value(QStringLiteral("button")).toString());
+    const Qt::KeyboardModifiers mods =
+        parseModifiers(params.value(QStringLiteral("modifiers")).toList());
+    // A press reports the button as held; a release reports nothing still down.
+    QMouseEvent event(down ? QEvent::MouseButtonPress : QEvent::MouseButtonRelease,
+                      point, widget->mapToGlobal(point), button,
+                      down ? button : Qt::NoButton, mods);
+    QApplication::sendEvent(widget, &event);
+
+    QVariantMap out;
+    out.insert(QStringLiteral("pos"), QVariantList{point.x(), point.y()});
+    return out;
+}
+
+} // namespace
+
 QVariantMap InputSynth::press(ObjectRegistry &registry, const QVariantMap &params)
 {
-    int keyCode = 0;
-    Qt::KeyboardModifiers mods;
-    parseChord(params.value(QStringLiteral("key")).toString(), &keyCode, &mods);
-    QWidget *target = keyTarget(registry, params);
-    QKeyEvent event(QEvent::KeyPress, keyCode, mods);
-    QApplication::sendEvent(target, &event);
-    return {};
+    return pressOrRelease(registry, params, true);
 }
 
 QVariantMap InputSynth::release(ObjectRegistry &registry, const QVariantMap &params)
 {
-    int keyCode = 0;
-    Qt::KeyboardModifiers mods;
-    parseChord(params.value(QStringLiteral("key")).toString(), &keyCode, &mods);
-    QWidget *target = keyTarget(registry, params);
-    QKeyEvent event(QEvent::KeyRelease, keyCode, mods);
-    QApplication::sendEvent(target, &event);
-    return {};
+    return pressOrRelease(registry, params, false);
 }
 
 QVariantMap InputSynth::wheel(ObjectRegistry &registry, const QVariantMap &params)
@@ -278,17 +302,35 @@ QVariantMap InputSynth::drag(ObjectRegistry &registry, const QVariantMap &params
     QPoint from;
     QWidget *source = targetWidget(registry, params, &from);
 
-    const QString toHandle = params.value(QStringLiteral("to_handle")).toString();
-    QObject *targetObject = registry.resolve(toHandle);
-    auto *target = qobject_cast<QWidget *>(targetObject);
-    if (!target) {
-        throw CommandError(ErrorCode::Unsupported,
-                           QStringLiteral("the drop target is not a widget"));
+    // Two callers, two shapes: Locator.drag_to names another object, while Mouse.drag gives raw
+    // coordinates inside the window it is bound to.
+    const QVariant fromPos = params.value(QStringLiteral("from_pos"));
+    if (fromPos.isValid() && !fromPos.isNull()) {
+        const QVariantList xy = fromPos.toList();
+        from = QPoint(xy.value(0).toInt(), xy.value(1).toInt());
     }
+
+    QWidget *target = source;
     QPoint to;
-    if (!WidgetBackend::interactionPointFor(target, toHandle, &to)) {
-        throw CommandError(ErrorCode::NotActionable,
-                           QStringLiteral("cannot compute a point on the drop target"));
+    const QVariant toPos = params.value(QStringLiteral("to_pos"));
+    if (toPos.isValid() && !toPos.isNull()) {
+        const QVariantList xy = toPos.toList();
+        to = QPoint(xy.value(0).toInt(), xy.value(1).toInt());
+    } else {
+        const QString toHandle = params.value(QStringLiteral("to_handle")).toString();
+        if (toHandle.isEmpty()) {
+            throw CommandError(ErrorCode::InvalidParams,
+                               QStringLiteral("give either 'to_handle' or 'to_pos'"));
+        }
+        target = qobject_cast<QWidget *>(registry.resolve(toHandle));
+        if (!target) {
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("the drop target is not a widget"));
+        }
+        if (!WidgetBackend::interactionPointFor(target, toHandle, &to)) {
+            throw CommandError(ErrorCode::NotActionable,
+                               QStringLiteral("cannot compute a point on the drop target"));
+        }
     }
 
     const int steps = qMax(1, params.value(QStringLiteral("steps"), 10).toInt());
