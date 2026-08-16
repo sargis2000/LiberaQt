@@ -2,9 +2,8 @@
 
 #include "dispatcher.h"
 
-#include <QList>
+#include <QStringList>
 
-class QAction;
 class QComboBox;
 class QMenuBar;
 
@@ -18,9 +17,11 @@ namespace liberaqt {
 // that opens a modal dialog from stranding the reply.
 namespace menu_walker {
 
-// Click the chain open: `chain[0]` is an entry on the bar, each next element an entry of the
-// menu its predecessor opens, the last the one being activated.
-void walkMenu(QMenuBar *bar, const QList<QAction *> &chain,
+// Click a "File > Export > PDF..." path open, resolving each level only AFTER the click has
+// genuinely opened its menu. That ordering is the point: menus routinely create their entries
+// in aboutToShow -- "Recent Files" lists -- so an entry can be unresolvable until its menu is
+// on screen. Resolves with the activated entry's {text, enabled, checked, clicked}.
+void walkMenu(QMenuBar *bar, const QStringList &path,
               Dispatcher::Resolver resolve, Dispatcher::Rejecter reject);
 
 // Click the combo open, then click row `index` in its popup view.

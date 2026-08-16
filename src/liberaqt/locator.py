@@ -254,10 +254,13 @@ class Locator:
         def once() -> Any:
             handle = self.resolve(timeout=0)
             if actionable:
-                self._session.call(
-                    Cmd.OBJ_INFO, {"handle": handle, "require_actionable": True},
-                    selector=self._selector,
-                )
+                info_params: dict[str, Any] = {"handle": handle, "require_actionable": True}
+                # The agent's reachability checks (modal in front, covered, parked off-window)
+                # apply to native delivery only, so the action's mode has to travel with the
+                # actionability probe too or the check would test the wrong delivery.
+                if params and params.get("mode"):
+                    info_params["mode"] = params["mode"]
+                self._session.call(Cmd.OBJ_INFO, info_params, selector=self._selector)
             payload = {"handle": handle}
             payload.update(params or {})
             return self._session.call(cmd, payload, selector=self._selector)
@@ -321,13 +324,16 @@ class Locator:
         when the typing is the thing under test.
 
         A read-only field is refused rather than written to. Succeeding where a user could never
-        have typed is a false pass, and a silent one.
+        have typed is a false pass, and a silent one. Reachability is deliberately *not*
+        required, though: filling a field on a form page that is not currently shown is exactly
+        what a state-setup helper is for, so the actionability probe runs with synthetic
+        semantics.
 
         Args:
             text: Text to set. Empty clears the field.
             timeout: Seconds to wait for the object to become editable.
         """
-        self._act(Cmd.SET_TEXT, {"text": text}, timeout=timeout)
+        self._act(Cmd.SET_TEXT, {"text": text, "mode": "synthetic"}, timeout=timeout)
 
     def type(self, text: str, delay: float = 0.0, timeout: float | None = None,
              mode: str | None = None) -> None:
@@ -500,12 +506,19 @@ class Locator:
             self._act(Cmd.CLICK, dict(params), timeout=timeout)
 
     def scroll_into_view(self, timeout: float | None = None) -> None:
-        """Scroll ancestors until the object is visible.
+        """Scroll every ``QScrollArea`` ancestor until the object is visible.
+
+        Programmatic by design, like :meth:`fill` — and its actionability probe runs with
+        synthetic semantics for the same reason: the whole point is a target that is *not*
+        currently reachable, so demanding reachability first would refuse exactly the widgets
+        this exists to rescue.
 
         Args:
             timeout: Seconds to wait for the object to resolve.
         """
-        self._act(Cmd.INVOKE, {"method": "__scroll_into_view", "args": []}, timeout=timeout)
+        self._act(Cmd.INVOKE,
+                  {"method": "__scroll_into_view", "args": [], "mode": "synthetic"},
+                  timeout=timeout)
 
     def wheel(self, dx: int = 0, dy: int = 0, timeout: float | None = None,
               mode: str | None = None) -> None:

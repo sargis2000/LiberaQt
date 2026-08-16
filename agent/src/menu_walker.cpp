@@ -91,6 +91,33 @@ QString actionLabel(const QAction *action)
     return label.remove(QLatin1Char('&'));
 }
 
+// The entry labelled `wanted` among `actions`, with the same failed-lookup diagnostics
+// WidgetBackend::menuPath produces: what *was* there, and where.
+QAction *findEntry(const QList<QAction *> &actions, const QString &wanted,
+                   const QString &context)
+{
+    QStringList available;
+    for (QAction *action : actions) {
+        const QString label = actionLabel(action);
+        if (label == wanted)
+            return action;
+        if (!label.isEmpty())
+            available.append(label);
+    }
+    throw CommandError(ErrorCode::NotFound,
+                       QStringLiteral("no menu entry '%1' under %2; there is: %3")
+                           .arg(wanted, context, available.join(QStringLiteral(", "))));
+}
+
+// What the walk has learned so far. Shared between the stages, because each stage's target can
+// only be resolved once the previous stage's click has opened its menu.
+struct Walk
+{
+    QPointer<QAction> current;      // the entry the last stage clicked
+    QList<QPointer<QMenu>> opened;  // every menu the walk opened, for cleanup on failure
+    QVariantMap leaf;               // filled by the final stage, becomes the resolution
+};
+
 // The centre of an entry inside its menu, or a throw when the menu cannot show it. A QMenu that
 // overflows the screen scrolls, and an entry outside the scrolled region has a geometry the user
 // cannot click.
@@ -110,39 +137,73 @@ QPoint entryPoint(QMenu *menu, QAction *action)
 
 namespace menu_walker {
 
-void walkMenu(QMenuBar *bar, const QList<QAction *> &chain,
+void walkMenu(QMenuBar *bar, const QStringList &path,
               Dispatcher::Resolver resolve, Dispatcher::Rejecter reject)
 {
     QList<ClickFlow::Fn> steps;
     const QPointer<QMenuBar> guard(bar);
+    auto walk = std::make_shared<Walk>();
+
+    // Records what is being activated, read just before the final click -- afterwards a
+    // checkable entry has already toggled.
+    auto noteLeaf = [walk](QAction *leaf) {
+        walk->leaf.insert(QStringLiteral("text"), actionLabel(leaf));
+        walk->leaf.insert(QStringLiteral("enabled"), leaf->isEnabled());
+        walk->leaf.insert(QStringLiteral("checked"), leaf->isChecked());
+        walk->leaf.insert(QStringLiteral("clicked"), true);
+    };
 
     // Open the top-level menu with a click on its bar entry. QMenuBar pops the menu up on the
     // press; nothing here blocks, because popup() runs no nested loop.
-    steps.append([guard, first = chain.first()]() {
+    steps.append([guard, walk, noteLeaf, wanted = path.first().trimmed(),
+                  lastStage = path.size() == 1]() {
         if (!guard)
             throw CommandError(ErrorCode::Stale, QStringLiteral("the menu bar was destroyed"));
-        const QRect rect = guard->actionGeometry(first);
+        QAction *entry = findEntry(guard->actions(), wanted, QStringLiteral("the menu bar"));
+        if (!entry->isEnabled()) {
+            throw CommandError(ErrorCode::NotActionable,
+                               QStringLiteral("the menu entry '%1' is disabled").arg(wanted));
+        }
+        const QRect rect = guard->actionGeometry(entry);
         if (rect.isEmpty()) {
             throw CommandError(ErrorCode::NotActionable,
                                QStringLiteral("'%1' has no geometry on the menu bar")
-                                   .arg(actionLabel(first)));
+                                   .arg(wanted));
         }
+        if (lastStage)
+            noteLeaf(entry);  // a bar entry with no menu is itself the action
+        walk->current = entry;
         InputSynth::clickNative(guard, rect.center());
         return ClickFlow::Step::Next;
     });
 
-    // For each deeper level: wait until the menu the previous click opened is on screen, then
-    // click the next entry inside it. Clicking an entry that owns a submenu opens that submenu,
-    // which is what the following stage waits for; clicking the final entry activates it.
-    for (int i = 1; i < chain.size(); ++i) {
-        QAction *parent = chain.at(i - 1);
-        QAction *entry = chain.at(i);
-        steps.append([parent, entry]() {
-            QMenu *menu = parent->menu();
-            if (!menu)
-                throw CommandError(ErrorCode::Stale, QStringLiteral("a submenu disappeared"));
+    // For each deeper level: wait until the menu the previous click opened is on screen, and
+    // only then look the next entry up inside it. The lookup MUST come after the wait -- a menu
+    // that builds its entries in aboutToShow ("Recent Files") has nothing to find until it is
+    // genuinely open. Clicking an entry that owns a submenu opens that submenu, which is what
+    // the following stage waits for; clicking the final entry activates it.
+    for (int i = 1; i < path.size(); ++i) {
+        steps.append([walk, noteLeaf, wanted = path.at(i).trimmed(),
+                      context = QStringList(path.mid(0, i)).join(QStringLiteral(" > ")),
+                      lastStage = i == path.size() - 1]() {
+            if (!walk->current)
+                throw CommandError(ErrorCode::Stale, QStringLiteral("a menu entry disappeared"));
+            QMenu *menu = walk->current->menu();
+            if (!menu) {
+                throw CommandError(ErrorCode::Unsupported,
+                                   QStringLiteral("'%1' is not a submenu").arg(context));
+            }
             if (!menu->isVisible())
                 return ClickFlow::Step::Wait;
+            walk->opened.append(menu);
+            QAction *entry = findEntry(menu->actions(), wanted, context);
+            if (!entry->isEnabled()) {
+                throw CommandError(ErrorCode::NotActionable,
+                                   QStringLiteral("the menu entry '%1' is disabled").arg(wanted));
+            }
+            if (lastStage)
+                noteLeaf(entry);
+            walk->current = entry;
             InputSynth::clickNative(menu, entryPoint(menu, entry));
             return ClickFlow::Step::Next;
         });
@@ -150,14 +211,15 @@ void walkMenu(QMenuBar *bar, const QList<QAction *> &chain,
 
     // On failure, close whatever got opened: a test that could not walk the menu should not
     // leave the application with a menu hanging open for every later action to fight with.
-    auto cleanup = [chain]() {
-        for (QAction *action : chain) {
-            if (QMenu *menu = action->menu(); menu && menu->isVisible())
+    auto cleanup = [walk]() {
+        for (const QPointer<QMenu> &menu : walk->opened) {
+            if (menu && menu->isVisible())
                 menu->hide();
         }
     };
 
-    new ClickFlow(steps, std::move(resolve), std::move(reject), cleanup,
+    new ClickFlow(steps, [walk, resolve](const QVariant &) { resolve(walk->leaf); },
+                  std::move(reject), cleanup,
                   QStringLiteral("a menu did not appear after being clicked (stage %1)"));
 }
 

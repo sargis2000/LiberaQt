@@ -35,8 +35,9 @@ Known gaps, in the order they unblock the most client surface:
 * `record.start` / `record.stop` — the recorder, and therefore `liberaqt record`
 * `session.set_options` honours `input_mode` and nothing else; `idle_poll_ms`, `animation_wait`
   and `network_wait` are accepted and dropped
-* `__scroll_into_view` is unimplemented; actionability does not detect obscuring widgets or modal
-  dialogs (`TODO(m1)` in `widget_backend.cpp`)
+* actionability *detects* an obscuring widget, a blocking modal or an off-window position and
+  names it (native mode only), but does not yet *adjust* the click point to an uncovered part of
+  the target
 
 Item views, menus, tabs, the remaining input events, property enumeration and `sync.wait_signal`
 are all implemented; a cell is addressed by the composite handle described in `docs/PROTOCOL.md`.

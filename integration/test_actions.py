@@ -7,7 +7,9 @@ agent actually does. When the two disagree, this file is the one that ran.
 
 from __future__ import annotations
 
-from liberaqt import expect
+import pytest
+
+from liberaqt import LiberaQtTimeoutError, expect
 
 
 def _main(assistant):
@@ -94,6 +96,91 @@ def test_select_item_in_synthetic_mode_writes_the_selection(assistant):
 
     records = tree.to_records()
     assert records, "the content tree has no rows to select"
+
+
+def test_a_modal_dialog_blocks_native_input_by_name(designer):
+    """Acting behind a modal fails immediately, naming the dialog that is in the way.
+
+    Designer keeps its modal "New Form" dialog over a live main window, which is exactly the
+    arrangement that used to surface as a mystery: the click quietly vanished. Now the
+    diagnosis is in the error, before anything is clicked at all.
+    """
+    designer.set_input_mode("native")
+    main = designer.window(title="Qt Designer")
+
+    with pytest.raises(LiberaQtTimeoutError) as exc:
+        main.locator("QDockWidget").first.click(timeout=0)
+
+    assert "blocked by the modal dialog" in str(exc.value)
+    assert "New Form" in str(exc.value)
+
+
+def test_a_parked_dock_is_unreachable_natively_but_fillable(assistant):
+    """The two modes disagree about a tabified dock's hidden page -- by design, loudly.
+
+    Qt parks the page at negative coordinates while its tab is not current, so no user can
+    interact with it: native actions refuse with a diagnosis pointing at the dock tab. fill()
+    deliberately still works -- writing state into a form page that is not currently shown is
+    what a setup helper is for.
+    """
+    assistant.set_input_mode("native")
+    win = _main(assistant)
+    bar = win.locator("QTabBar:visible")
+    field = win.locator("QDockWidget[objectName='IndexWindow'] QLineEdit")
+
+    original = bar["currentIndex"]
+    bar.select_tab(text="Contents")
+    try:
+        with pytest.raises(LiberaQtTimeoutError) as exc:
+            field.click(timeout=0)
+        assert "outside its window's on-screen area" in str(exc.value)
+
+        field.fill("still reachable for setup")
+        assert field.text == "still reachable for setup"
+        field.fill("")
+    finally:
+        bar.select_tab(index=original)
+
+
+def test_scroll_into_view_makes_a_buried_widget_clickable(qmleasing):
+    """scroll_into_view turns "covered" into clickable, verified by clicking.
+
+    qmleasing's point list lives in a QScrollArea. The area is scrolled to the top first, so
+    the last row is off the fold; the reachability check refuses it, scroll_into_view brings
+    it in, and the click that failed then succeeds.
+    """
+    qmleasing.set_input_mode("native")
+    win = qmleasing.window(title="QML Easing Curve Editor")
+    area = win.locator("QScrollArea:visible")
+
+    # The command itself first: it reports having found and asked a scroll area, which holds
+    # whether or not anything is currently buried.
+    rows = win.locator("QDoubleSpinBox[objectName='p1_x']").all()
+    enabled = next(r for r in rows if r.is_enabled)
+    result = qmleasing._session.call(
+        "object.invoke",
+        {"handle": enabled.resolve(), "method": "__scroll_into_view", "args": []})
+    assert result.get("scrolled") is True, f"no QScrollArea ancestor was scrolled: {result}"
+
+    # Scroll the list to its bottom, so the first rows go off the top of the fold.
+    area.wheel(dy=50)
+    qmleasing.wait_for_idle()
+
+    # Only a *reachability* refusal counts as buried: qmleasing disables its endpoint rows, and
+    # a disabled widget stays disabled however far anything scrolls.
+    buried = None
+    for candidate in rows:
+        try:
+            candidate.click(timeout=0)
+        except LiberaQtTimeoutError as exc:
+            if "covered by" in str(exc) or "outside its window" in str(exc):
+                buried = candidate
+                break
+    if buried is None:
+        pytest.skip("the point list fits its scroll area; nothing is buried to scroll to")
+
+    buried.scroll_into_view()
+    buried.click()  # raises if scrolling did not make it reachable
 
 
 def test_menu_trigger_in_synthetic_mode_still_activates_the_entry(assistant):

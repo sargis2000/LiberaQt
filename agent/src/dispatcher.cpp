@@ -211,7 +211,11 @@ void Dispatcher::registerBuiltins()
         // A composite handle names a cell inside the view, so describe the cell, not the view.
         const QVariantMap info = WidgetBackend::describeItem(object, handle, m_registry);
         if (params.value(QStringLiteral("require_actionable")).toBool()) {
-            const QString why = WidgetBackend::actionabilityProblem(object);
+            // Reachability (modal in front, covered, parked off-window) is only demanded of
+            // native input; the client forwards the action's mode here so the check matches
+            // the delivery the action will actually use.
+            const bool native = InputSynth::modeOf(params) == InputSynth::Mode::Native;
+            const QString why = WidgetBackend::actionabilityProblem(object, native);
             if (!why.isEmpty())
                 throw CommandError(ErrorCode::NotActionable, why, info);
         }
@@ -372,6 +376,23 @@ void Dispatcher::registerBuiltins()
     registerAsyncCommand(QStringLiteral("widget.menu_trigger"),
                          [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
         QObject *window = m_registry.resolve(params.value(QStringLiteral("window")).toString());
+
+        // The native walk resolves each level only after clicking its menu open, so entries a
+        // menu creates in aboutToShow are addressable -- but only there. The probe and the
+        // synthetic queued trigger resolve the whole path up front instead, because they open
+        // nothing, and therefore can only see entries that exist while the menus are closed.
+        if (!params.value(QStringLiteral("probe")).toBool()
+            && InputSynth::modeOf(params) == InputSynth::Mode::Native) {
+            const QStringList path = params.value(QStringLiteral("path")).toString()
+                                         .split(QLatin1Char('>'), Qt::SkipEmptyParts);
+            if (path.isEmpty()) {
+                throw CommandError(ErrorCode::InvalidParams,
+                                   QStringLiteral("'path' is required"));
+            }
+            menu_walker::walkMenu(WidgetBackend::menuBarOf(window), path, resolve, reject);
+            return;
+        }
+
         QMenuBar *bar = nullptr;
         const QList<QAction *> chain = WidgetBackend::menuPath(window, params, &bar);
 
@@ -393,18 +414,11 @@ void Dispatcher::registerBuiltins()
                                        .arg(name.remove(QLatin1Char('&'))));
             }
         }
-
-        if (InputSynth::modeOf(params) == InputSynth::Mode::Synthetic) {
-            // Queued for the same reason object.invoke offers it: a menu entry very often opens
-            // a modal dialog, and a direct trigger would not return until it was dismissed.
-            QMetaObject::invokeMethod(leaf, "trigger", Qt::QueuedConnection);
-            out.insert(QStringLiteral("queued"), true);
-            resolve(out);
-            return;
-        }
-        out.insert(QStringLiteral("clicked"), true);
-        menu_walker::walkMenu(bar, chain,
-                              [resolve, out](const QVariant &) { resolve(out); }, reject);
+        // Queued for the same reason object.invoke offers it: a menu entry very often opens a
+        // modal dialog, and a direct trigger would not return until it was dismissed.
+        QMetaObject::invokeMethod(leaf, "trigger", Qt::QueuedConnection);
+        out.insert(QStringLiteral("queued"), true);
+        resolve(out);
     });
 
     registerCommand(QStringLiteral("widget.model_data"),

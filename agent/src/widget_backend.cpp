@@ -20,6 +20,7 @@
 #include <QMenuBar>
 #include <QMetaObject>
 #include <QMetaProperty>
+#include <QScrollArea>
 #include <QStyle>
 #include <QStyleOptionSpinBox>
 #include <QTabBar>
@@ -91,6 +92,38 @@ QVariant WidgetBackend::synthetic(QObject *object, const QString &name, const QV
         throw CommandError(ErrorCode::Unsupported,
                            QStringLiteral("%1 is not a window, so it cannot be activated")
                                .arg(QString::fromUtf8(object->metaObject()->className())));
+    }
+
+    if (name == QLatin1String("__scroll_into_view")) {
+        auto *widget = qobject_cast<QWidget *>(object);
+        if (!widget) {
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("%1 is not a widget, so it cannot be scrolled to")
+                                   .arg(QString::fromUtf8(object->metaObject()->className())));
+        }
+        // Every scroll area on the way up gets asked, innermost first, because the target can be
+        // nested -- a field inside a form inside a scrolled page. Item-view *cells* never come
+        // through here: their locators carry composite handles, and every cell interaction
+        // scrolls its view itself (widget.item_rect, interactionPointFor).
+        bool scrolled = false;
+        bool sawForeignArea = false;
+        for (QWidget *parent = widget->parentWidget(); parent;
+             parent = parent->parentWidget()) {
+            if (auto *area = qobject_cast<QScrollArea *>(parent)) {
+                area->ensureWidgetVisible(widget);
+                scrolled = true;
+            } else if (qobject_cast<QAbstractScrollArea *>(parent)) {
+                sawForeignArea = true;
+            }
+        }
+        if (!scrolled && sawForeignArea) {
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("the ancestor scroll area is not a QScrollArea; "
+                                              "scroll it with wheel(), or address items through "
+                                              "row()/cell(), which scroll their own view"));
+        }
+        out.insert(QStringLiteral("scrolled"), scrolled);
+        return out;
     }
 
     throw CommandError(ErrorCode::Unsupported,
@@ -178,7 +211,18 @@ QVariantMap WidgetBackend::describe(QObject *object, ObjectRegistry &registry)
     return info;
 }
 
-QString WidgetBackend::actionabilityProblem(QObject *object)
+namespace {
+
+QString describeCulprit(const QWidget *culprit)
+{
+    const QString name = culprit->objectName();
+    const QString cls = QString::fromUtf8(culprit->metaObject()->className());
+    return name.isEmpty() ? cls : QStringLiteral("%1 '%2'").arg(cls, name);
+}
+
+} // namespace
+
+QString WidgetBackend::actionabilityProblem(QObject *object, bool nativeInput)
 {
     auto *widget = qobject_cast<QWidget *>(object);
     if (!widget) {
@@ -198,8 +242,48 @@ QString WidgetBackend::actionabilityProblem(QObject *object)
     if (widget->size().isEmpty())
         return QStringLiteral("widget has zero size");
 
-    // TODO(m1): detect obscuring siblings and modal dialogs covering the target, and report which
-    // widget is in the way -- that is usually the actual bug the test found.
+    // Reachability, which only real input cares about -- synthetic delivery exists precisely to
+    // bypass what follows, so checking it there would break the escape hatch.
+    if (!nativeInput)
+        return {};
+
+    // A modal dialog disables input to every other window, and Qt drops native events aimed
+    // past it. Reporting which dialog beats reporting nothing while the click quietly vanishes:
+    // an unexpected modal is Libero's favourite failure mode.
+    if (QWidget *modal = QApplication::activeModalWidget()) {
+        if (modal->window() != widget->window() && !modal->isAncestorOf(widget)) {
+            const QString title = modal->windowTitle();
+            return QStringLiteral("input is blocked by the modal dialog %1 (%2)")
+                .arg(title.isEmpty() ? QStringLiteral("<untitled>")
+                                     : QStringLiteral("'%1'").arg(title),
+                     describeCulprit(modal));
+        }
+    }
+
+    QPoint point;
+    if (!interactionPoint(object, &point))
+        return {};
+    QWidget *top = widget->window();
+    const QPoint inWindow = widget->mapTo(top, point);
+
+    // Qt parks a tabified dock's inactive pages at negative coordinates; they answer
+    // isVisible() but no user can click them. The tab that brings them back is the real target.
+    if (!top->rect().contains(inWindow)) {
+        return QStringLiteral("the widget lies outside its window's on-screen area "
+                              "(is it in a dock whose tab is not current?)");
+    }
+
+    // Who would really receive a click at the interaction point. Same-window only, which is the
+    // deliberate limit: childAt() is pure widget-tree arithmetic, whereas asking the window
+    // system drags every OTHER application's windows into the answer -- and an application
+    // under test is routinely covered by a terminal without being any less drivable.
+    QWidget *hit = top->childAt(inWindow);
+    if (!hit)
+        hit = top;
+    if (hit != widget && !widget->isAncestorOf(hit) && !hit->isAncestorOf(widget))
+        return QStringLiteral("the widget's interaction point is covered by %1")
+            .arg(describeCulprit(hit));
+
     return {};
 }
 
@@ -642,8 +726,7 @@ QVariantMap WidgetBackend::tabSelect(QObject *object, const QVariantMap &params)
 
 // ---------------------------------------------------------------- menus
 
-QList<QAction *> WidgetBackend::menuPath(QObject *window, const QVariantMap &params,
-                                         QMenuBar **barOut)
+QMenuBar *WidgetBackend::menuBarOf(QObject *window)
 {
     auto *widget = qobject_cast<QWidget *>(window);
     if (!widget) {
@@ -653,6 +736,13 @@ QList<QAction *> WidgetBackend::menuPath(QObject *window, const QVariantMap &par
     QMenuBar *bar = widget->findChild<QMenuBar *>();
     if (!bar)
         throw CommandError(ErrorCode::NotFound, QStringLiteral("the window has no menu bar"));
+    return bar;
+}
+
+QList<QAction *> WidgetBackend::menuPath(QObject *window, const QVariantMap &params,
+                                         QMenuBar **barOut)
+{
+    QMenuBar *bar = menuBarOf(window);
     *barOut = bar;
 
     const QStringList path = params.value(QStringLiteral("path")).toString()

@@ -25,8 +25,12 @@ public:
                                 bool visualOnly);
 
     // Empty string means "actionable". Otherwise a human-readable reason, which becomes the
-    // NotActionableError message on the Python side.
-    static QString actionabilityProblem(QObject *object);
+    // NotActionableError message on the Python side. With `nativeInput` the check also demands
+    // the object be *reachable* -- not behind a modal dialog, not covered by another widget,
+    // not parked outside its window -- naming what is in the way, because that is usually the
+    // actual bug the test found. Synthetic delivery skips those, deliberately: bypassing them
+    // is what it is for.
+    static QString actionabilityProblem(QObject *object, bool nativeInput = false);
 
     // Centre of the object in window coordinates, adjusted if the centre is obscured.
     static bool interactionPoint(QObject *object, QPoint *out);
@@ -68,11 +72,14 @@ public:
 
     // ---------------------------------------------------------------- menus
     //
+    // The window's menu bar, or a throw when it has none.
+    static QMenuBar *menuBarOf(QObject *window);
+
     // Resolves a "File > Export > PDF..." path from the window's menu bar into the chain of
-    // actions it names, one per level. Only resolution lives here -- activation is either a
-    // queued trigger (synthetic) or a click-driven walk (menu_walker), chosen by the dispatcher.
-    // All the which-entries-are-there diagnostics come from this function, so a wrong path fails
-    // identically in both modes.
+    // actions it names, one per level -- all of it *before* any menu opens, which is what the
+    // probe and the synthetic queued trigger need. The native path deliberately does not use
+    // this: menu_walker resolves each level after clicking its menu open, so entries created in
+    // aboutToShow are addressable there and only there.
     static QList<QAction *> menuPath(QObject *window, const QVariantMap &params,
                                      QMenuBar **barOut);
 

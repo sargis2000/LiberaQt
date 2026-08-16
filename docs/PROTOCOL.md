@@ -173,6 +173,7 @@ prefix and handled before meta-object lookup:
 | Synthetic method | Effect |
 | --- | --- |
 | `__activate` | `raise()` + `activateWindow()` (or `QWindow::requestActivate`) |
+| `__scroll_into_view` | `ensureWidgetVisible` on every `QScrollArea` ancestor, innermost first; returns `{"scrolled": bool}`. Item cells never need it — cell interactions scroll their own view. |
 
 ### Input
 
@@ -243,9 +244,16 @@ On the synthetic path `input.wheel` and mouse events are redirected to a scroll 
 because `QAbstractScrollArea` ignores events sent to the frame. The native path needs no such
 special case: Qt hit-tests to the viewport itself.
 
-> Not yet true: obscured-centre adjustment. The agent does not currently detect an obscuring
-> sibling, so a covered object is clicked at its centre regardless (`TODO(m1)`). In native mode
-> the click then lands on whatever is actually in front, which at least fails visibly.
+With `require_actionable`, `object.info` also checks **reachability** when the delivery mode is
+native (the client forwards the action's `mode` so the probe matches the delivery): a modal
+dialog in front of the target's window, a covering widget at the interaction point, or a
+position outside the window's on-screen area (a tabified dock whose tab is not current) each
+fail with the culprit named. Same-window only — another application's window in front never
+counts, since an AUT is routinely covered by a terminal without being any less drivable.
+Synthetic delivery skips these checks deliberately.
+
+> Not yet true: obscured-centre *adjustment*. A partially covered target whose centre is under
+> the covering widget is refused rather than clicked on an uncovered part (`TODO(m1)`).
 
 ### Widgets and models
 
@@ -272,8 +280,10 @@ clicks, and only the aiming is programmatic:
   while it is open.
 * `widget.menu_trigger` walks a `>`-separated path from the window's menu bar (`"File > Import >
   HDL Source Files"`, captions matched with any `&` accelerator removed) by clicking each menu
-  open and clicking the entry inside it, so `aboutToShow` population and hover state happen as
-  they would for a user. The reply resolves once the final click is posted, not after its effect
+  open and clicking the entry inside it — and it resolves each level only **after** its menu is
+  genuinely on screen, so entries a menu creates in `aboutToShow` ("Recent Files" lists) are
+  addressable on this path, and only on this path: `probe` and the synthetic trigger resolve
+  with the menus closed. The reply resolves once the final click is posted, not after its effect
   — a menu entry routinely opens a modal dialog (§1).
 
 With `"mode": "synthetic"` each falls back to writing the state: `setCurrentIndex`, an explicit

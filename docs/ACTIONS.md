@@ -34,20 +34,24 @@ Legend: **yes** — works as user input · **prop** — writes state, no input i
 | `select_item` | Select a row or cell in an item view | yes | yes | Native scrolls the item into view and clicks it — the resulting selection is the view's own click policy; synthetic writes the current index and selects the full row. |
 | `spin` | Step a spin box via its arrow buttons | yes | yes | The arrow position comes from the widget's `QStyle` in both modes; synthetic sends the click to the same point. |
 | `set_checked` / `check` / `uncheck` | Put a checkbox or toggle into a state | yes | yes | Sugar over `click`, clicking only when the state differs. Aimed at the style's *click rect*, not the widget centre — a stretched checkbox's centre is a dead zone a user's click would miss too. A radio button cannot be *un*checked in either mode, because a user cannot either. |
-| `menu(...).trigger()` | Activate a `"File > Import > ..."` menu path | yes | yes | Native clicks each menu open along the path (`aboutToShow` and hover happen for real); synthetic queues `QAction::trigger` and opens nothing. **Both** resolve the path before anything opens, so entries a menu only creates inside `aboutToShow` (e.g. "Recent Files") are not addressable yet in either mode. |
+| `menu(...).trigger()` | Activate a `"File > Import > ..."` menu path | yes | yes | Native clicks each menu open along the path and resolves every level only **after** its menu is genuinely on screen — so entries a menu creates inside `aboutToShow` ("Recent Files" lists) are addressable there. Synthetic queues `QAction::trigger` without opening anything, so it (and `is_enabled`, which probes without opening) can only see entries that exist while the menus are closed. |
 | `fill` / `clear` | Set or clear text in one shot | prop | prop | Deliberately not input, in any mode: writes the `text` property so change signals fire once, for state that is not itself under test. Refuses a read-only field — succeeding where a user could not type is a false pass. |
 | `locator[...] = value` | Write any property | prop | prop | Escape hatch by design. |
 | `invoke` / `evaluate` | Call slots / `Q_INVOKABLE` methods | prop | prop | Introspection and setup, not interaction. |
-| `scroll_into_view` | Scroll ancestors until visible | no | no | Unimplemented; raises `UnsupportedOperationError`. Scroll with `wheel()`, or address items via `row()` / `cell()`, which scroll their view themselves. |
+| `scroll_into_view` | Scroll ancestors until visible | prop | prop | Asks every `QScrollArea` ancestor to `ensureWidgetVisible` — programmatic by design, like `fill`. Item cells never need it: `row()` / `cell()` scroll their own view. A non-`QScrollArea` scroll ancestor is refused with a hint. |
 | Input on QML / Qt Quick items | Click or type at a Quick item | no | no | The input backend is QWidget-only (milestone 2). `object.find` and property reads work on Quick objects; input at them raises `unsupported`. |
 | `quick.*` commands | QML evaluate / find-by-id / list items | no | no | Not registered; raise `UnsupportedOperationError`. |
 | `record.start` / `record.stop` | The recorder, `liberaqt record` | no | no | Not registered. |
 | OS-level input | Squish's `nativeType` / `nativeMouseClick` | no | no | No third mode yet. Would need `SendInput`, screen coordinates and a foreground window — incompatible with headless runs and driving several applications at once, so it waits for a widget that ignores the platform seam in practice. |
 | Touch, gestures, IME | Taps, flicks, composition | no | no | Milestone 2. |
 
-One caveat that spans every pointer row: actionability does not yet detect an *obscuring*
-widget (`TODO(m1)`). A native click on a covered point lands on whatever is really in front — a
-visible failure; a synthetic click bypasses the covering entirely — a silent one.
+One rule that spans every pointer row: on the native path, actionability also demands the target
+be **reachable**, and the refusal names what is in the way — `blocked by the modal dialog 'New
+Form' (QDialog)`, `covered by QLabel 'overlay'`, `outside its window's on-screen area` (the
+parked-dock case). Synthetic delivery skips those checks deliberately; bypassing them is what it
+is for. The check is same-window only — another *application's* window in front never counts,
+because an application under test is routinely covered by a terminal without being any less
+drivable.
 
 ## Choosing a mode
 
