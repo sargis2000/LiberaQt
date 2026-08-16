@@ -1,8 +1,12 @@
 #pragma once
 
+#include <QList>
 #include <QVariantList>
 #include <QVariantMap>
 
+class QAction;
+class QComboBox;
+class QMenuBar;
 class QObject;
 class QWidget;
 class QPoint;
@@ -64,10 +68,22 @@ public:
 
     // ---------------------------------------------------------------- menus
     //
-    // Walks a "File > Export > PDF..." path from the window's menu bar. Triggering is queued: a
-    // menu action commonly opens a modal dialog, and a direct call would not return until that
-    // dialog closed, stranding the reply.
-    static QVariantMap menuTrigger(QObject *window, const QVariantMap &params);
+    // Resolves a "File > Export > PDF..." path from the window's menu bar into the chain of
+    // actions it names, one per level. Only resolution lives here -- activation is either a
+    // queued trigger (synthetic) or a click-driven walk (menu_walker), chosen by the dispatcher.
+    // All the which-entries-are-there diagnostics come from this function, so a wrong path fails
+    // identically in both modes.
+    static QList<QAction *> menuPath(QObject *window, const QVariantMap &params,
+                                     QMenuBar **barOut);
+
+    // The row a combo-box selection names, by "text" or "index"/"row", with the available
+    // entries in the error when it names none.
+    static int comboEntry(QComboBox *combo, const QVariantMap &params);
+
+    // A named clickable sub-part of a widget -- a spin box's "spin_up" / "spin_down" arrows,
+    // located through QStyle so the point is right for whatever style the application uses.
+    // False when the widget has no such part.
+    static bool partPoint(QWidget *widget, const QString &part, QPoint *out);
 
     // Every Q_PROPERTY the class exposes, so a test can discover what an unfamiliar widget offers.
     static QVariantList listProperties(QObject *object);

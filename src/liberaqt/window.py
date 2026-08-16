@@ -201,12 +201,12 @@ class Window(Locator):
 
 
 class MenuAction:
-    """A menu entry addressed by slash-separated path, e.g. ``"File/Recent/foo.txt"``.
+    """A menu entry addressed by ``>``-separated path, e.g. ``"File > Recent > foo.txt"``.
 
     Args:
         session: The wire session used for every command.
         window_handle: Window whose menu bar is searched.
-        path: Slash-separated path to the entry.
+        path: ``>``-separated path to the entry, as the captions read on screen.
     """
 
     def __init__(self, session: Session, window_handle: str, path: str):
@@ -214,13 +214,29 @@ class MenuAction:
         self._window = window_handle
         self._path = path
 
-    def trigger(self) -> None:
-        """Activate the entry, opening each parent menu on the way, then wait for the UI to settle.
+    def trigger(self, mode: str | None = None) -> None:
+        """Activate the entry the way a user does, then wait for the UI to settle.
+
+        On the native path the walk is made of real clicks: one opens each menu along the path,
+        the last lands on the entry -- so hover state, ``aboutToShow`` population and everything
+        else that only happens when a menu is genuinely opened, happens. ``mode="synthetic"``
+        triggers the ``QAction`` directly instead, without opening anything, which still works
+        when a menu is unreachable -- scrolled out of an overlong menu, for instance.
+
+        Either way the reply does not wait for the entry's own effect, so an entry that opens a
+        modal dialog returns immediately.
+
+        Args:
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
 
         Raises:
-            ObjectNotFoundError: No entry matches the path.
+            ObjectNotFoundError: No entry matches the path. The error lists the entries that do
+                exist at the level that failed.
         """
-        self._session.call(Cmd.MENU_TRIGGER, {"window": self._window, "path": self._path})
+        params = {"window": self._window, "path": self._path}
+        if mode:
+            params["mode"] = mode
+        self._session.call(Cmd.MENU_TRIGGER, params)
         self._session.wait_for_idle()
 
     @property

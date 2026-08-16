@@ -34,6 +34,17 @@ public:
     static void setMode(Mode mode);
     static bool parseMode(const QString &name, Mode *out);
 
+    // The mode a command should run in: its own "mode" parameter if present, else the session
+    // default. Throws invalid_params on a name that is neither delivery mode.
+    static Mode modeOf(const QVariantMap &params);
+
+    // One native press-and-release (with the leading move) at a point inside `widget`. This is
+    // the building block the composite user actions are made of -- clicking a tab, walking a
+    // menu open, picking an entry in a combo popup. Queued like everything native, so the click
+    // has not happened yet when this returns.
+    static void clickNative(QWidget *widget, const QPoint &point,
+                            Qt::MouseButton button = Qt::LeftButton);
+
     static QVariantMap click(ObjectRegistry &registry, const QVariantMap &params);
     static QVariantMap hover(ObjectRegistry &registry, const QVariantMap &params);
     static QVariantMap key(ObjectRegistry &registry, const QVariantMap &params);

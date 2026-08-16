@@ -166,3 +166,84 @@ def test_the_input_mode_is_reported_as_applied(assistant):
     assistant.set_input_mode("native")  # raises if the agent did not apply it
     with pytest.raises(ProtocolError, match="sideways"):
         assistant.set_input_mode("sideways")
+
+
+def test_typing_with_embedded_key_chords(find_bar, assistant):
+    """Squish's type() syntax: chords ride along in the text, wrapped in angle brackets.
+
+    ``<Ctrl+A>`` selects what was just typed, so the second word replaces the first -- proof the
+    chord was pressed between the two, not merely typed as characters.
+    """
+    _, field = find_bar
+    field.click()
+    field.type("wrong<Ctrl+A>right")
+    assistant.wait_for_idle()
+
+    expect(field).to_have_text("right")
+
+
+def test_a_menu_walk_genuinely_opens_the_menus(assistant):
+    """The path to an entry is walked with real clicks, and the entry's dialog appears.
+
+    ``Add Bookmark...`` opens a modal dialog, which makes it the ideal target twice over: a new
+    top-level window is unambiguous proof the final click landed, and the modal proves the walk
+    resolves without waiting for the entry's effect -- the reply would otherwise be stranded for
+    as long as the dialog stayed open.
+    """
+    assistant.set_input_mode("native")
+    win = next(w for w in assistant.windows if "Assistant" in w.title)
+    before = {w.title for w in assistant.windows}
+
+    win.menu("Bookmarks > Add Bookmark...").trigger()
+    assistant.wait_for_idle()
+
+    opened = {w.title for w in assistant.windows} - before
+    assert opened, "no dialog appeared, so the final menu entry was never activated"
+    assistant._session.call("input.key", {"key": "Esc"})
+    assistant.wait_for_idle()
+
+
+def test_selecting_a_combo_entry_clicks_through_its_popup(qmleasing):
+    """select_option opens the popup with a click and clicks the entry inside it.
+
+    The walker rejects outright if the popup never appears, so this passing at all means the
+    combo was genuinely opened rather than having its index written.
+    """
+    qmleasing.set_input_mode("native")
+    win = qmleasing.window(title="QML Easing Curve Editor")
+    combo = win.locator("QComboBox#comboBox")
+    target = 3 if combo["currentIndex"] != 3 else 4
+
+    combo.select_option(index=target)
+
+    assert combo["currentIndex"] == target
+
+
+def test_stepping_a_spin_box_clicks_its_arrows(qmleasing):
+    """spin() clicks the style's own arrow rectangles, one real click per step."""
+    qmleasing.set_input_mode("native")
+    win = qmleasing.window(title="QML Easing Curve Editor")
+    spin = win.locator("QSpinBox#spinBox")
+    before, step = spin["value"], spin["singleStep"]
+
+    spin.spin(2)
+    assert spin["value"] == before + 2 * step
+
+    spin.spin(-1)
+    assert spin["value"] == before + step
+
+
+def test_the_synthetic_paths_remain_reachable_per_action(qmleasing):
+    """The two delivery modes stay independently usable on one action at a time.
+
+    ``mode="synthetic"`` on a single call writes the state directly -- the escape hatch for
+    targets a user cannot reach -- while the session stays native for everything else.
+    """
+    qmleasing.set_input_mode("native")
+    win = qmleasing.window(title="QML Easing Curve Editor")
+    combo = win.locator("QComboBox#comboBox")
+    target = 1 if combo["currentIndex"] != 1 else 2
+
+    combo.select_option(index=target, mode="synthetic")
+
+    assert combo["currentIndex"] == target

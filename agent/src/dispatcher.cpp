@@ -3,6 +3,7 @@
 #include "compat.h"
 #include "idle_tracker.h"
 #include "input_synth.h"
+#include "menu_walker.h"
 #include "meta_invoke.h"
 #include "object_registry.h"
 #include "screenshot.h"
@@ -14,7 +15,10 @@
 #include <cstdlib>
 #include <memory>
 
+#include <QAction>
+#include <QComboBox>
 #include <QCoreApplication>
+#include <QMenuBar>
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
@@ -334,19 +338,73 @@ void Dispatcher::registerBuiltins()
         return WidgetBackend::itemRect(object, params, m_registry);
     });
 
-    registerCommand(QStringLiteral("widget.select_item"), [this](const QVariantMap &params) {
+    // Selecting is clicking, on the native path, so these three are input commands in all but
+    // name. A combo box or a menu needs several clicks with a popup appearing between them, so
+    // those run as staged walks (menu_walker) and resolve when the final click has been posted.
+    registerAsyncCommand(QStringLiteral("widget.select_item"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
         QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
-        return WidgetBackend::selectItem(object, params);
+        if (auto *combo = qobject_cast<QComboBox *>(object)) {
+            const int entry = WidgetBackend::comboEntry(combo, params);
+            QVariantMap out;
+            out.insert(QStringLiteral("index"), entry);
+            out.insert(QStringLiteral("text"), combo->itemText(entry));
+            if (InputSynth::modeOf(params) == InputSynth::Mode::Synthetic) {
+                combo->setCurrentIndex(entry);
+                resolve(out);
+                return;
+            }
+            menu_walker::selectComboEntry(
+                combo, entry, [resolve, out](const QVariant &) { resolve(out); }, reject);
+            return;
+        }
+        const QVariant result = WidgetBackend::selectItem(object, params);
+        QTimer::singleShot(0, qApp, [resolve, result] {
+            QTimer::singleShot(0, qApp, [resolve, result] { resolve(result); });
+        });
     });
 
-    registerCommand(QStringLiteral("widget.tab_select"), [this](const QVariantMap &params) {
+    registerInputCommand(QStringLiteral("widget.tab_select"), [this](const QVariantMap &params) {
         QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
         return WidgetBackend::tabSelect(object, params);
     });
 
-    registerCommand(QStringLiteral("widget.menu_trigger"), [this](const QVariantMap &params) {
+    registerAsyncCommand(QStringLiteral("widget.menu_trigger"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
         QObject *window = m_registry.resolve(params.value(QStringLiteral("window")).toString());
-        return WidgetBackend::menuTrigger(window, params);
+        QMenuBar *bar = nullptr;
+        const QList<QAction *> chain = WidgetBackend::menuPath(window, params, &bar);
+
+        QVariantMap out;
+        QAction *leaf = chain.last();
+        out.insert(QStringLiteral("enabled"), leaf->isEnabled());
+        out.insert(QStringLiteral("checked"), leaf->isChecked());
+        QString label = leaf->text();
+        out.insert(QStringLiteral("text"), label.remove(QLatin1Char('&')));
+        if (params.value(QStringLiteral("probe")).toBool()) {
+            resolve(out);
+            return;
+        }
+        for (QAction *action : chain) {
+            if (!action->isEnabled()) {
+                QString name = action->text();
+                throw CommandError(ErrorCode::NotActionable,
+                                   QStringLiteral("the menu entry '%1' is disabled")
+                                       .arg(name.remove(QLatin1Char('&'))));
+            }
+        }
+
+        if (InputSynth::modeOf(params) == InputSynth::Mode::Synthetic) {
+            // Queued for the same reason object.invoke offers it: a menu entry very often opens
+            // a modal dialog, and a direct trigger would not return until it was dismissed.
+            QMetaObject::invokeMethod(leaf, "trigger", Qt::QueuedConnection);
+            out.insert(QStringLiteral("queued"), true);
+            resolve(out);
+            return;
+        }
+        out.insert(QStringLiteral("clicked"), true);
+        menu_walker::walkMenu(bar, chain,
+                              [resolve, out](const QVariant &) { resolve(out); }, reject);
     });
 
     registerCommand(QStringLiteral("widget.model_data"),

@@ -90,9 +90,18 @@ QWidget *targetWidget(ObjectRegistry &registry, const QVariantMap &params, QPoin
                                           "(Qt Quick backend)"));
     }
     const QVariant pos = params.value(QStringLiteral("pos"));
+    const QString part = params.value(QStringLiteral("part")).toString();
     if (pos.isValid() && !pos.isNull()) {
         const QVariantList xy = pos.toList();
         *point = QPoint(xy.value(0).toInt(), xy.value(1).toInt());
+    } else if (!part.isEmpty()) {
+        // A named sub-part -- a spin box arrow -- located through the widget's style.
+        if (!WidgetBackend::partPoint(widget, part, point)) {
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("%1 has no clickable part '%2'")
+                                   .arg(QString::fromUtf8(widget->metaObject()->className()),
+                                        part));
+        }
     } else if (!WidgetBackend::interactionPointFor(
                    widget, params.value(QStringLiteral("handle")).toString(), point)) {
         throw CommandError(ErrorCode::NotActionable,
@@ -324,6 +333,20 @@ bool InputSynth::parseMode(const QString &name, Mode *out)
         return true;
     }
     return false;
+}
+
+InputSynth::Mode InputSynth::modeOf(const QVariantMap &params)
+{
+    return modeFor(params);
+}
+
+void InputSynth::clickNative(QWidget *widget, const QPoint &point, Qt::MouseButton button)
+{
+    const Target target = requireWindow(locate(widget, point));
+    ensureActive(widget, target.window);
+    nativeMouse(target, QEvent::MouseMove, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    nativeMouse(target, QEvent::MouseButtonPress, button, button, Qt::NoModifier);
+    nativeMouse(target, QEvent::MouseButtonRelease, Qt::NoButton, button, Qt::NoModifier);
 }
 
 QVariantMap InputSynth::click(ObjectRegistry &registry, const QVariantMap &params)

@@ -1,12 +1,14 @@
 #include "widget_backend.h"
 
 #include "dispatcher.h"
+#include "input_synth.h"
 #include "object_registry.h"
 #include "selector_engine.h"
 #include "value_codec.h"
 
 #include <QAbstractItemModel>
 #include <QAbstractItemView>
+#include <QAbstractSpinBox>
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
@@ -15,6 +17,8 @@
 #include <QMenuBar>
 #include <QMetaObject>
 #include <QMetaProperty>
+#include <QStyle>
+#include <QStyleOptionSpinBox>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QGuiApplication>
@@ -471,43 +475,37 @@ QVariantMap WidgetBackend::describeItem(QObject *object, const QString &handle,
     return info;
 }
 
+int WidgetBackend::comboEntry(QComboBox *combo, const QVariantMap &params)
+{
+    const QVariant text = params.value(QStringLiteral("text"));
+    if (text.isValid() && !text.isNull()) {
+        const int target = combo->findText(text.toString());
+        if (target < 0) {
+            QStringList available;
+            for (int i = 0; i < combo->count(); ++i)
+                available.append(combo->itemText(i));
+            throw CommandError(ErrorCode::NotFound,
+                               QStringLiteral("no entry '%1'; there is: %2")
+                                   .arg(text.toString(), available.join(QStringLiteral(", "))));
+        }
+        return target;
+    }
+    const QVariant index = params.value(QStringLiteral("index"));
+    const int target = index.isValid() && !index.isNull()
+                           ? index.toInt()
+                           : params.value(QStringLiteral("row"), -1).toInt();
+    if (target < 0 || target >= combo->count()) {
+        throw CommandError(ErrorCode::NotFound,
+                           QStringLiteral("entry %1 is out of range; there are %2")
+                               .arg(target).arg(combo->count()));
+    }
+    return target;
+}
+
 QVariantMap WidgetBackend::selectItem(QObject *object, const QVariantMap &params)
 {
-    // A combo box is not an item view -- the view lives in its popup, which only exists while the
-    // popup is open. Setting the current entry directly is both simpler and more reliable than
-    // opening the popup to click inside it.
-    if (auto *combo = qobject_cast<QComboBox *>(object)) {
-        const QVariant text = params.value(QStringLiteral("text"));
-        int target = -1;
-        if (text.isValid() && !text.isNull()) {
-            target = combo->findText(text.toString());
-            if (target < 0) {
-                QStringList available;
-                for (int i = 0; i < combo->count(); ++i)
-                    available.append(combo->itemText(i));
-                throw CommandError(ErrorCode::NotFound,
-                                   QStringLiteral("no entry '%1'; there is: %2")
-                                       .arg(text.toString(),
-                                            available.join(QStringLiteral(", "))));
-            }
-        } else {
-            const QVariant index = params.value(QStringLiteral("index"));
-            target = index.isValid() && !index.isNull()
-                         ? index.toInt()
-                         : params.value(QStringLiteral("row"), -1).toInt();
-            if (target < 0 || target >= combo->count()) {
-                throw CommandError(ErrorCode::NotFound,
-                                   QStringLiteral("entry %1 is out of range; there are %2")
-                                       .arg(target).arg(combo->count()));
-            }
-        }
-        combo->setCurrentIndex(target);
-        QVariantMap out;
-        out.insert(QStringLiteral("index"), target);
-        out.insert(QStringLiteral("text"), combo->currentText());
-        return out;
-    }
-
+    // Combo boxes never reach this: the dispatcher routes them to the popup-clicking walker,
+    // because their view only exists while the popup is open.
     QAbstractItemView *view = asView(object);
     const QModelIndex index = findIndex(view, params);
     if (!index.flags().testFlag(Qt::ItemIsEnabled)) {
@@ -516,9 +514,24 @@ QVariantMap WidgetBackend::selectItem(QObject *object, const QVariantMap &params
     }
 
     view->scrollTo(index, QAbstractItemView::EnsureVisible);
-    view->setCurrentIndex(index);
-    if (QItemSelectionModel *selection = view->selectionModel())
-        selection->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    if (InputSynth::modeOf(params) == InputSynth::Mode::Native) {
+        // Selecting is what happens when a user clicks the item, so that is what this does --
+        // which selection the click produces (row, cell, toggle) is the view's own policy,
+        // exactly as it would be for the user.
+        const QRect rect = view->visualRect(index);
+        if (rect.isEmpty()) {
+            throw CommandError(ErrorCode::NotActionable,
+                               QStringLiteral("the item at row %1 has no geometry to click")
+                                   .arg(index.row()));
+        }
+        InputSynth::clickNative(view->viewport(), rect.center());
+    } else {
+        view->setCurrentIndex(index);
+        if (QItemSelectionModel *selection = view->selectionModel()) {
+            selection->select(index,
+                             QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        }
+    }
 
     QVariantMap out;
     out.insert(QStringLiteral("row"), index.row());
@@ -571,10 +584,33 @@ QVariantMap WidgetBackend::tabSelect(QObject *object, const QVariantMap &params)
         }
     }
 
-    if (bar)
+    // From here on the bar is what matters even when the caller named the QTabWidget: the tabs
+    // a user sees and clicks live on it.
+    QTabBar *clickBar = bar ? bar : tabs->tabBar();
+    if (!clickBar->isTabEnabled(target)) {
+        throw CommandError(ErrorCode::NotActionable,
+                           QStringLiteral("the tab '%1' is disabled")
+                               .arg(clickBar->tabText(target).remove(QLatin1Char('&'))));
+    }
+
+    if (InputSynth::modeOf(params) == InputSynth::Mode::Native) {
+        const QRect rect = clickBar->tabRect(target);
+        // A bar with more tabs than width scrolls, and a tab beyond the scrolled region has a
+        // geometry the user cannot click. Saying so beats quietly switching behind their back.
+        if (!clickBar->isVisible() || rect.isEmpty()
+            || !clickBar->rect().contains(rect.center())) {
+            throw CommandError(ErrorCode::NotActionable,
+                               QStringLiteral("the tab '%1' is not clickable where the bar "
+                                              "currently shows it; select_tab(mode='synthetic') "
+                                              "reaches it anyway")
+                                   .arg(clickBar->tabText(target).remove(QLatin1Char('&'))));
+        }
+        InputSynth::clickNative(clickBar, rect.center());
+    } else if (bar) {
         bar->setCurrentIndex(target);
-    else
+    } else {
         tabs->setCurrentIndex(target);
+    }
 
     QVariantMap out;
     out.insert(QStringLiteral("index"), target);
@@ -583,7 +619,8 @@ QVariantMap WidgetBackend::tabSelect(QObject *object, const QVariantMap &params)
 
 // ---------------------------------------------------------------- menus
 
-QVariantMap WidgetBackend::menuTrigger(QObject *window, const QVariantMap &params)
+QList<QAction *> WidgetBackend::menuPath(QObject *window, const QVariantMap &params,
+                                         QMenuBar **barOut)
 {
     auto *widget = qobject_cast<QWidget *>(window);
     if (!widget) {
@@ -593,19 +630,20 @@ QVariantMap WidgetBackend::menuTrigger(QObject *window, const QVariantMap &param
     QMenuBar *bar = widget->findChild<QMenuBar *>();
     if (!bar)
         throw CommandError(ErrorCode::NotFound, QStringLiteral("the window has no menu bar"));
+    *barOut = bar;
 
     const QStringList path = params.value(QStringLiteral("path")).toString()
                                  .split(QLatin1Char('>'), Qt::SkipEmptyParts);
     if (path.isEmpty())
         throw CommandError(ErrorCode::InvalidParams, QStringLiteral("'path' is required"));
 
+    QList<QAction *> chain;
     QList<QAction *> actions = bar->actions();
-    QAction *found = nullptr;
     QStringList walked;
 
     for (int depth = 0; depth < path.size(); ++depth) {
         const QString wanted = path.at(depth).trimmed();
-        found = nullptr;
+        QAction *found = nullptr;
         for (QAction *action : actions) {
             QString label = action->text();
             if (label.remove(QLatin1Char('&')) == wanted) {
@@ -630,6 +668,7 @@ QVariantMap WidgetBackend::menuTrigger(QObject *window, const QVariantMap &param
                                         available.join(QStringLiteral(", "))));
         }
         walked.append(wanted);
+        chain.append(found);
         if (depth + 1 < path.size()) {
             QMenu *submenu = found->menu();
             if (!submenu) {
@@ -639,25 +678,32 @@ QVariantMap WidgetBackend::menuTrigger(QObject *window, const QVariantMap &param
             actions = submenu->actions();
         }
     }
+    return chain;
+}
 
-    QVariantMap out;
-    out.insert(QStringLiteral("enabled"), found->isEnabled());
-    out.insert(QStringLiteral("checked"), found->isChecked());
-    QString label = found->text();
-    out.insert(QStringLiteral("text"), label.remove(QLatin1Char('&')));
-    if (params.value(QStringLiteral("probe")).toBool())
-        return out;
-
-    if (!found->isEnabled()) {
-        throw CommandError(ErrorCode::NotActionable,
-                           QStringLiteral("the menu entry '%1' is disabled")
-                               .arg(walked.join(QStringLiteral(" > "))));
+bool WidgetBackend::partPoint(QWidget *widget, const QString &part, QPoint *out)
+{
+    if (auto *spin = qobject_cast<QAbstractSpinBox *>(widget)) {
+        QStyle::SubControl control = QStyle::SC_None;
+        if (part == QLatin1String("spin_up"))
+            control = QStyle::SC_SpinBoxUp;
+        else if (part == QLatin1String("spin_down"))
+            control = QStyle::SC_SpinBoxDown;
+        if (control == QStyle::SC_None)
+            return false;
+        // The style decides where the arrows are, so the style is asked -- a hardcoded "right
+        // edge, upper half" is wrong the moment a style stacks or mirrors them.
+        QStyleOptionSpinBox option;
+        option.initFrom(spin);
+        option.subControls = QStyle::SC_All;
+        const QRect rect = spin->style()->subControlRect(QStyle::CC_SpinBox, &option,
+                                                         control, spin);
+        if (rect.isEmpty())
+            return false;
+        *out = rect.center();
+        return true;
     }
-    // Queued for the same reason object.invoke offers it: a menu entry very often opens a modal
-    // dialog, and a direct trigger would not return until that dialog was dismissed.
-    QMetaObject::invokeMethod(found, "trigger", Qt::QueuedConnection);
-    out.insert(QStringLiteral("queued"), true);
-    return out;
+    return false;
 }
 
 QVariantList WidgetBackend::listProperties(QObject *object)

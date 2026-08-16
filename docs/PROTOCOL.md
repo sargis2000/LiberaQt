@@ -72,12 +72,14 @@ Such commands resolve later, from the event loop:
   nothing happened. Two turns rather than one because whether the window-system queue is drained
   before or after zero-timers fire within a single pass is a property of the platform dispatcher.
 
-Two more commands avoid the same trap by *posting* their work and answering immediately, which
-necessarily discards the result:
+* `widget.select_item`, `widget.tab_select`, `widget.menu_trigger` — selecting *is* clicking on
+  the native path (§ Widgets), and a menu or combo needs several clicks with a popup appearing
+  between them, so these run as staged walks that resolve when the final click has been posted.
 
-* `object.invoke` with `"queued": true` — required for anything that opens a modal dialog, such as
-  triggering a menu `QAction`. Returns `{"queued": true}` and no value.
-* `widget.menu_trigger` — always queued, for the same reason.
+One more command avoids the same trap by *posting* its work and answering immediately, which
+necessarily discards the result: `object.invoke` with `"queued": true` — required for anything
+that opens a modal dialog. Returns `{"queued": true}` and no value. (`widget.menu_trigger` in
+synthetic mode queues its trigger the same way.)
 
 Nothing else may block.
 
@@ -176,7 +178,7 @@ prefix and handled before meta-object lookup:
 
 | Command | Params |
 | --- | --- |
-| `input.click` | `{"handle", "button", "modifiers", "pos"?, "count": 1\|2}` |
+| `input.click` | `{"handle", "button", "modifiers", "pos"?, "part"?, "count": 1\|2}` |
 | `input.press` / `input.release` | `{"handle", "key"}` for a keyboard chord, or `{"handle", "button", "pos"?}` for a mouse button |
 | `input.hover` | `{"handle", "pos"?}` |
 | `input.drag` | `{"handle", "to_handle"\|"to_pos", "from_pos"?, "steps"}` |
@@ -232,7 +234,10 @@ down. The agent picks by which parameter is present. `input.drag` likewise accep
 
 Default click position is the object's visual centre, mapped to window coordinates via
 `QWidget::mapTo` / `QQuickItem::mapToScene`. When the handle names a cell (see below), the centre
-is the cell's, and the view is scrolled to bring it on screen first.
+is the cell's, and the view is scrolled to bring it on screen first. `part` aims at a named
+sub-part instead — `"spin_up"` / `"spin_down"` for a spin box's arrows — located through the
+widget's `QStyle`, so the point is right for whatever style the application uses. An explicit
+`pos` wins over both.
 
 On the synthetic path `input.wheel` and mouse events are redirected to a scroll area's viewport,
 because `QAbstractScrollArea` ignores events sent to the frame. The native path needs no such
@@ -248,18 +253,37 @@ special case: Qt hit-tests to the viewport itself.
 | --- | --- | --- |
 | `widget.item_rect` | `{"handle", "text"\|"row", "column"?}` | `{"handle", "row", "column", "text", "rect"}` |
 | `widget.model_data` | `{"handle", "max_rows"?}` | `{"rows": [...], "headers": [...]}` |
-| `widget.select_item` | `{"handle", "text"\|"row"\|"index", "column"?}` | `{"row", "column", "text"}` |
-| `widget.menu_trigger` | `{"window", "path", "probe"?}` | `{"enabled", "checked", "text", "queued"?}` |
-| `widget.tab_select` | `{"handle", "text"\|"index"}` | `{"index"}` |
+| `widget.select_item` | `{"handle", "text"\|"row"\|"index", "column"?, "mode"?}` | `{"row", "column", "text"}` (`{"index", "text"}` for a combo box) |
+| `widget.menu_trigger` | `{"window", "path", "probe"?, "mode"?}` | `{"enabled", "checked", "text", "clicked"\|"queued"}` |
+| `widget.tab_select` | `{"handle", "text"\|"index", "mode"?}` | `{"index"}` |
 
 `column` accepts an index or a header caption, since a caller thinks in terms of "the Part Number
 column" rather than column 17. `text` lookups search the whole grid, recursively, and call
 `fetchMore` on the way down — a lazily populated tree reports no children until something asks.
 
-`widget.menu_trigger` walks a `>`-separated path from the window's menu bar (`"File > Import > HDL
-Source Files"`), matching captions with any `&` accelerator removed. `probe: true` reports whether
-the entry is enabled without activating it. Activation is **queued**, because a menu entry
-routinely opens a modal dialog; see §1 on asynchronous commands.
+**Selecting is clicking.** On the native path these three are user actions built out of real
+clicks, and only the aiming is programmatic:
+
+* `widget.tab_select` clicks the tab's rectangle on its bar. A tab the bar has scrolled out of
+  reach is refused rather than switched behind the user's back.
+* `widget.select_item` on a view scrolls the item into view and clicks it; the selection that
+  results is the view's own click policy. On a **combo box** it clicks the box open, waits for
+  the popup, and clicks the entry inside it — a staged walk, since the popup's view only exists
+  while it is open.
+* `widget.menu_trigger` walks a `>`-separated path from the window's menu bar (`"File > Import >
+  HDL Source Files"`, captions matched with any `&` accelerator removed) by clicking each menu
+  open and clicking the entry inside it, so `aboutToShow` population and hover state happen as
+  they would for a user. The reply resolves once the final click is posted, not after its effect
+  — a menu entry routinely opens a modal dialog (§1).
+
+With `"mode": "synthetic"` each falls back to writing the state: `setCurrentIndex`, an explicit
+selection, a queued `QAction::trigger`. That still reaches what a user cannot — an entry scrolled
+out of an overlong menu, a tab past the bar's edge. `probe: true` on `menu_trigger` reports
+whether an entry is enabled without activating anything in either mode.
+
+Staged walks reject with `timeout` if a popup fails to appear within 1.5 s of the click that
+should have opened it, and close whatever they did manage to open, so a failed walk does not
+leave a menu hanging over the next action.
 
 #### Addressing a cell
 

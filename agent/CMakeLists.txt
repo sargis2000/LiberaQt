@@ -32,6 +32,7 @@ set(LIBERAQT_SOURCES
   src/selector_engine.cpp
   src/widget_backend.cpp
   src/input_synth.cpp
+  src/menu_walker.cpp
   src/screenshot.cpp
   src/recorder.cpp
   src/idle_tracker.cpp

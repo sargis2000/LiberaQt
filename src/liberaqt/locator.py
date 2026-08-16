@@ -7,6 +7,7 @@ survive the UI not being ready yet, which is the single largest source of flakin
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Union
 
@@ -19,6 +20,14 @@ if TYPE_CHECKING:
     from .session import Session
 
 SelectorLike = Union[str, dict, "sel.Selector", None]
+
+#: A Squish-style key token inside :meth:`Locator.type` text: ``<Return>``, ``<Ctrl+A>``.
+#: Only sequences that look like key chords are treated as keys, so ordinary text containing
+#: ``<`` -- an HTML fragment, a comparison -- types literally. The second pattern is the same
+#: thing with its one group around the whole token, which is what ``re.split`` needs to keep
+#: the tokens in its output.
+_KEY_TOKEN = re.compile(r"<(?P<chord>[A-Za-z0-9_]+(?:\+[A-Za-z0-9_]+)*)>")
+_KEY_SPLIT = re.compile(r"(<[A-Za-z0-9_]+(?:\+[A-Za-z0-9_]+)*>)")
 
 
 class Locator:
@@ -259,7 +268,7 @@ class Locator:
 
     def click(self, button: str = "left", modifiers: list[str] | None = None,
               position: tuple | None = None, count: int = 1,
-              timeout: float | None = None) -> None:
+              timeout: float | None = None, mode: str | None = None) -> None:
         """Click the object with a real mouse event.
 
         Args:
@@ -268,10 +277,14 @@ class Locator:
             position: ``(x, y)`` within the object. Defaults to its centre.
             count: Number of clicks; ``2`` is a double click.
             timeout: Seconds to wait for the object to become clickable.
+            mode: ``"native"`` or ``"synthetic"``, overriding the session's input mode for this
+                one click; see :meth:`~liberaqt.application.Application.set_input_mode`.
         """
-        self._act(Cmd.CLICK, {"button": button, "modifiers": modifiers or [],
-                              "pos": list(position) if position else None, "count": count},
-                  timeout=timeout)
+        params: dict[str, Any] = {"button": button, "modifiers": modifiers or [],
+                                  "pos": list(position) if position else None, "count": count}
+        if mode:
+            params["mode"] = mode
+        self._act(Cmd.CLICK, params, timeout=timeout)
 
     def double_click(self, **kw: Any) -> None:
         """Double-click the object.
@@ -289,13 +302,14 @@ class Locator:
         """
         self.click(button="right", **kw)
 
-    def hover(self, timeout: float | None = None) -> None:
+    def hover(self, timeout: float | None = None, mode: str | None = None) -> None:
         """Move the pointer over the object, for tooltips and hover states.
 
         Args:
             timeout: Seconds to wait for the object to become hoverable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
-        self._act(Cmd.HOVER, timeout=timeout)
+        self._act(Cmd.HOVER, {"mode": mode} if mode else None, timeout=timeout)
 
     def fill(self, text: str, timeout: float | None = None) -> None:
         """Clear and set text in one shot, by writing the property.
@@ -315,29 +329,52 @@ class Locator:
         """
         self._act(Cmd.SET_TEXT, {"text": text}, timeout=timeout)
 
-    def type(self, text: str, delay: float = 0.0, timeout: float | None = None) -> None:
+    def type(self, text: str, delay: float = 0.0, timeout: float | None = None,
+             mode: str | None = None) -> None:
         """Type character by character, as a person would.
 
         Each character is a real press and release carrying both a key code and its text, so
         shortcuts, type-ahead and key handlers all see it. Unlike :meth:`fill` this cannot write
         into a field the user could not type into.
 
+        Key chords may be embedded in the text Squish-style, wrapped in angle brackets:
+        ``type("hello<Ctrl+A>replaced<Return>")`` types, selects all, types over the selection
+        and presses Return. A ``<`` that does not open a chord-shaped token -- ``"a < b"`` --
+        types literally; one that does -- ``"<b>"`` -- is pressed as a key, exactly as Squish
+        would. Text that must stay literal regardless belongs in :meth:`fill`.
+
         Args:
-            text: Text to type.
+            text: Text to type, with optional ``<Key>`` chords.
             delay: Seconds between keystrokes, for applications that debounce input.
             timeout: Seconds to wait for the object to become editable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
-        self._act(Cmd.TYPE_TEXT, {"text": text, "delay_ms": int(delay * 1000)}, timeout=timeout)
+        extra: dict[str, Any] = {"mode": mode} if mode else {}
+        for segment in _KEY_SPLIT.split(text):
+            if not segment:
+                continue
+            token = _KEY_TOKEN.fullmatch(segment)
+            if token:
+                self._act(Cmd.KEY, {"key": token.group("chord"), **extra}, timeout=timeout)
+            else:
+                self._act(Cmd.TYPE_TEXT,
+                          {"text": segment, "delay_ms": int(delay * 1000), **extra},
+                          timeout=timeout)
 
-    def press(self, key: str, count: int = 1, timeout: float | None = None) -> None:
+    def press(self, key: str, count: int = 1, timeout: float | None = None,
+              mode: str | None = None) -> None:
         """Press a key or chord.
 
         Args:
             key: Key name or chord, e.g. ``"Ctrl+S"``, ``"Enter"``, ``"Alt+F4"``.
             count: How many times to press it.
             timeout: Seconds to wait for the object to become actionable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
-        self._act(Cmd.KEY, {"key": key, "count": count}, timeout=timeout)
+        params: dict[str, Any] = {"key": key, "count": count}
+        if mode:
+            params["mode"] = mode
+        self._act(Cmd.KEY, params, timeout=timeout)
 
     def clear(self, timeout: float | None = None) -> None:
         """Clear the object's text.
@@ -374,47 +411,91 @@ class Locator:
         self.set_checked(False, **kw)
 
     def select_option(self, text: str | None = None, index: int | None = None,
-                      timeout: float | None = None) -> None:
-        """Choose an entry in a combo box or list.
+                      timeout: float | None = None, mode: str | None = None) -> None:
+        """Choose an entry in a combo box or list, the way a user does.
+
+        On the native path a combo box is clicked open and the entry is clicked in its popup, so
+        everything the application hangs off that -- ``activated``, popup delegates, per-entry
+        side effects -- happens as it would for a user. ``mode="synthetic"`` sets the current
+        index directly instead.
 
         Args:
             text: Entry label to select.
             index: Zero-based entry position, as an alternative to ``text``.
             timeout: Seconds to wait for the object to become actionable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
-        self._act(Cmd.SELECT_ITEM, {"text": text, "index": index}, timeout=timeout)
+        params: dict[str, Any] = {"text": text, "index": index}
+        if mode:
+            params["mode"] = mode
+        self._act(Cmd.SELECT_ITEM, params, timeout=timeout)
 
     def select_item(self, text: str | None = None, row: int | None = None,
-                    column: int | None = None, timeout: float | None = None) -> None:
-        """Select a cell or row in an item view.
+                    column: int | None = None, timeout: float | None = None,
+                    mode: str | None = None) -> None:
+        """Select a cell or row in an item view by clicking it.
+
+        On the native path the item is scrolled into view and clicked, so the selection that
+        results is whatever the view's own policy makes of a click -- rows, cells, toggling --
+        exactly as for a user. ``mode="synthetic"`` sets the current index and selection
+        directly instead.
 
         Args:
             text: Cell text to select.
             row: Zero-based row index.
             column: Zero-based column index.
             timeout: Seconds to wait for the object to become actionable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
-        self._act(Cmd.SELECT_ITEM, {"text": text, "row": row, "column": column}, timeout=timeout)
+        params: dict[str, Any] = {"text": text, "row": row, "column": column}
+        if mode:
+            params["mode"] = mode
+        self._act(Cmd.SELECT_ITEM, params, timeout=timeout)
 
     def select_tab(self, text: str | None = None, index: int | None = None,
-                   timeout: float | None = None) -> None:
-        """Switch a tab widget to one of its tabs.
+                   timeout: float | None = None, mode: str | None = None) -> None:
+        """Switch a tab widget to one of its tabs by clicking the tab.
 
         Works on either the ``QTabWidget`` or its ``QTabBar``, since which one a selector lands on
         is an implementation detail of the application. Tab captions are matched with any ``&``
-        accelerator removed, so the text is what the user actually sees.
+        accelerator removed, so the text is what the user actually sees. On the native path the
+        tab's rectangle on the bar is clicked; a tab the bar has scrolled out of reach is refused
+        rather than switched behind the user's back -- ``mode="synthetic"`` reaches it anyway.
 
         Args:
             text: Tab caption to switch to.
             index: Zero-based tab position, as an alternative to ``text``.
             timeout: Seconds to wait for the object to become actionable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
 
         Example:
             ::
 
                 win.locator("QTabWidget").select_tab("Services")
         """
-        self._act(Cmd.TAB_SELECT, {"text": text, "index": index}, timeout=timeout)
+        params: dict[str, Any] = {"text": text, "index": index}
+        if mode:
+            params["mode"] = mode
+        self._act(Cmd.TAB_SELECT, params, timeout=timeout)
+
+    def spin(self, steps: int, timeout: float | None = None, mode: str | None = None) -> None:
+        """Step a spin box by clicking its arrow buttons.
+
+        Squish's ``spinUp`` / ``spinDown`` in one method: positive steps click the up arrow that
+        many times, negative the down arrow. The arrows are located through the widget's style,
+        so the clicks land wherever this application actually draws them. Each click is a
+        separate action, as a user's would be, so per-step signals all fire.
+
+        Args:
+            steps: How far to step; the sign picks the arrow.
+            timeout: Seconds to wait for the spin box to become actionable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
+        """
+        params: dict[str, Any] = {"part": "spin_up" if steps > 0 else "spin_down"}
+        if mode:
+            params["mode"] = mode
+        for _ in range(abs(steps)):
+            self._act(Cmd.CLICK, dict(params), timeout=timeout)
 
     def scroll_into_view(self, timeout: float | None = None) -> None:
         """Scroll ancestors until the object is visible.
@@ -424,17 +505,23 @@ class Locator:
         """
         self._act(Cmd.INVOKE, {"method": "__scroll_into_view", "args": []}, timeout=timeout)
 
-    def wheel(self, dx: int = 0, dy: int = 0, timeout: float | None = None) -> None:
+    def wheel(self, dx: int = 0, dy: int = 0, timeout: float | None = None,
+              mode: str | None = None) -> None:
         """Scroll over the object with the mouse wheel.
 
         Args:
             dx: Horizontal scroll in wheel steps.
             dy: Vertical scroll in wheel steps. Positive scrolls down.
             timeout: Seconds to wait for the object to become actionable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
-        self._act(Cmd.WHEEL, {"dx": dx, "dy": dy}, timeout=timeout)
+        params: dict[str, Any] = {"dx": dx, "dy": dy}
+        if mode:
+            params["mode"] = mode
+        self._act(Cmd.WHEEL, params, timeout=timeout)
 
-    def drag_to(self, target: Locator, steps: int = 10, timeout: float | None = None) -> None:
+    def drag_to(self, target: Locator, steps: int = 10, timeout: float | None = None,
+                mode: str | None = None) -> None:
         """Drag this object onto another.
 
         Args:
@@ -442,8 +529,12 @@ class Locator:
             steps: Intermediate move events. More steps look more human, which matters for
                 widgets that only start a drag after a movement threshold.
             timeout: Seconds to wait for this object to become actionable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
-        self._act(Cmd.DRAG, {"to_handle": target.resolve(), "steps": steps}, timeout=timeout)
+        params: dict[str, Any] = {"to_handle": target.resolve(), "steps": steps}
+        if mode:
+            params["mode"] = mode
+        self._act(Cmd.DRAG, params, timeout=timeout)
 
     def screenshot(self, path: str | None = None) -> bytes:
         """Grab just this object as a PNG.

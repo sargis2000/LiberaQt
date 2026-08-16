@@ -241,6 +241,15 @@ Three consequences that are easy to rediscover the hard way:
 * **Every `input.*` command is asynchronous**, because it queues rather than delivers. Replying
   before the queue drains lets the next command race the click.
 
+**Selecting is clicking.** `select_tab` clicks the tab rect; `select_item` clicks the row;
+`select_option` clicks a combo open and clicks the entry in its popup; `menu().trigger()` walks
+the path by clicking each menu open (`menu_walker.cpp` — staged, async, resolves when the final
+click is posted). `spin()` clicks a spin box's arrows via `QStyle::subControlRect`. All take
+`mode="synthetic"` to fall back to writing the state, which is also the escape hatch for targets
+a user cannot reach (a tab scrolled off the bar, an entry in an overlong menu). Every input-ish
+client action takes a per-call `mode=`; the session default comes from `set_input_mode` /
+`--liberaqt-input-mode`. `Locator.type` accepts Squish-style embedded chords: `"abc<Ctrl+A>xyz"`.
+
 `input.set_text` is the deliberate exception: it writes the property, for cheap setup. It refuses
 a read-only widget, because succeeding where a user could not type is a false pass.
 
