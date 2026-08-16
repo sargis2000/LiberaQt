@@ -264,6 +264,7 @@ Synthetic delivery skips these checks deliberately.
 | `widget.select_item` | `{"handle", "text"\|"row"\|"index", "column"?, "mode"?}` | `{"row", "column", "text"}` (`{"index", "text"}` for a combo box) |
 | `widget.menu_trigger` | `{"window", "path", "probe"?, "mode"?}` | `{"enabled", "checked", "text", "clicked"\|"queued"}` |
 | `widget.tab_select` | `{"handle", "text"\|"index", "mode"?}` | `{"index"}` |
+| `widget.context_menu` | `{"handle", "path"}` | `{"enabled", "checked", "text", "clicked"}` |
 
 `column` accepts an index or a header caption, since a caller thinks in terms of "the Part Number
 column" rather than column 17. `text` lookups search the whole grid, recursively, and call
@@ -291,9 +292,22 @@ selection, a queued `QAction::trigger`. That still reaches what a user cannot �
 out of an overlong menu, a tab past the bar's edge. `probe: true` on `menu_trigger` reports
 whether an entry is enabled without activating anything in either mode.
 
+`widget.context_menu` right-clicks the handle — a widget, or a cell when the handle is composite
+— and walks `path` inside the menu that appears, clicking all the way. It has no synthetic mode:
+a context menu is built inside `contextMenuEvent`, so there is nothing to trigger without
+genuinely opening it.
+
+> A right-click delivered natively must **not** be followed by a hand-made `QContextMenuEvent`:
+> `QWidgetWindow::handleMouseEvent` already derives one from the right button, and posting a
+> second opens the menu twice. The extra menu outlives whatever the walk did to the first, which
+> reads as "the click activated nothing and left a menu on screen". Synthetic delivery bypasses
+> `QWidgetWindow` entirely, so there the agent does have to post it.
+
 Staged walks reject with `timeout` if a popup fails to appear within 1.5 s of the click that
-should have opened it, and close whatever they did manage to open, so a failed walk does not
-leave a menu hanging over the next action.
+should have opened it, and close whatever they did manage to open — draining the popup stack
+with `close()` rather than hiding the recorded menus, since an application is free to show a
+menu with `QMenu::exec()` and hiding such a menu from inside its own nested loop does not
+dismiss it. So a failed walk does not leave a menu hanging over the next action.
 
 #### Addressing a cell
 

@@ -48,6 +48,7 @@ class Cmd:
     MODEL_DATA = "widget.model_data"
     SELECT_ITEM = "widget.select_item"
     MENU_TRIGGER = "widget.menu_trigger"
+    CONTEXT_MENU = "widget.context_menu"
     TAB_SELECT = "widget.tab_select"
 
     # quick

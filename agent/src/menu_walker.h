@@ -2,10 +2,12 @@
 
 #include "dispatcher.h"
 
+#include <QPoint>
 #include <QStringList>
 
 class QComboBox;
 class QMenuBar;
+class QWidget;
 
 namespace liberaqt {
 
@@ -27,6 +29,14 @@ void walkMenu(QMenuBar *bar, const QStringList &path,
 // Click the combo open, then click row `index` in its popup view.
 void selectComboEntry(QComboBox *combo, int index,
                       Dispatcher::Resolver resolve, Dispatcher::Rejecter reject);
+
+// Right-click `point` inside `target`, wait for the context menu, and walk `path` inside it by
+// clicking -- Squish's openItemContextMenu + activateItem in one move. Native-only by nature: a
+// context menu is *built* inside contextMenuEvent, so there is no QAction to trigger without
+// genuinely opening it. A wrong entry name fails listing what the menu really offers, which
+// doubles as the way to discover an unfamiliar application's context menus.
+void walkContextMenu(QWidget *target, const QPoint &point, const QStringList &path,
+                     Dispatcher::Resolver resolve, Dispatcher::Rejecter reject);
 
 } // namespace menu_walker
 

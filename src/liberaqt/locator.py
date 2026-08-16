@@ -263,7 +263,12 @@ class Locator:
                 self._session.call(Cmd.OBJ_INFO, info_params, selector=self._selector)
             payload = {"handle": handle}
             payload.update(params or {})
-            return self._session.call(cmd, payload, selector=self._selector)
+            # No `selector=` on the action itself. Resolution already succeeded -- we hold a
+            # handle -- so a `not_found` from here is about something *inside* the widget: a
+            # tab, a row, a menu entry. The agent's message is the whole diagnosis and lists
+            # what was really there; attaching the selector would make `from_agent_error`
+            # rebuild it as "no object matched selector: QTabWidget" and throw that away.
+            return self._session.call(cmd, payload)
 
         result = retry(once, timeout=timeout, description=f"action {cmd} on {self._selector}")
         self._session.wait_for_idle()
@@ -485,6 +490,26 @@ class Locator:
         if mode:
             params["mode"] = mode
         self._act(Cmd.TAB_SELECT, params, timeout=timeout)
+
+    def context_menu(self, path: str, timeout: float | None = None) -> None:
+        """Right-click the object and activate an entry in the menu that appears.
+
+        Squish's ``openItemContextMenu`` + ``activateItem`` in one move, and every step of it
+        user input: a real right-click opens the menu, a click lands on the entry, and a ``>``
+        in the path walks a submenu the same way. Works on item-view rows and cells too --
+        ``tree.row(has_text="counter").context_menu("Set As Root")`` right-clicks the row.
+
+        Native-only by nature: a context menu is built inside ``contextMenuEvent``, so there is
+        no action to trigger without genuinely opening the menu. A wrong entry name fails
+        listing what the menu really offers, which doubles as the way to *discover* an
+        unfamiliar application's context menus.
+
+        Args:
+            path: Entry caption, with ``>`` between submenu levels, as the captions read on
+                screen (``&`` accelerators are ignored).
+            timeout: Seconds to wait for the object to become actionable.
+        """
+        self._act(Cmd.CONTEXT_MENU, {"path": path}, timeout=timeout)
 
     def spin(self, steps: int, timeout: float | None = None, mode: str | None = None) -> None:
         """Step a spin box by clicking its arrow buttons.

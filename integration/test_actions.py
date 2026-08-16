@@ -183,6 +183,46 @@ def test_scroll_into_view_makes_a_buried_widget_clickable(qmleasing):
     buried.click()  # raises if scrolling did not make it reachable
 
 
+def test_a_context_menu_is_opened_and_walked_by_right_clicking(assistant):
+    """Right-click a tree row, then click an entry in the menu that appears.
+
+    Squish's openItemContextMenu + activateItem. Native by nature: the menu is built inside
+    ``contextMenuEvent``, so there is no QAction to reach without genuinely opening it.
+    """
+    assistant.set_input_mode("native")
+    win = _main(assistant)
+    tree = win.locator("QHelpContentWidget")
+
+    tree.row(index=0).context_menu("Open Link")
+    assistant.wait_for_idle()
+
+    assert [w.title for w in assistant.windows] == ["Qt Assistant"], \
+        "the context menu was left open"
+
+
+def test_a_wrong_context_entry_lists_what_the_menu_offers(assistant):
+    """The failure names the real entries, which is also how to discover an unfamiliar menu.
+
+    Two regressions guarded at once. The diagnosis has to survive ``_act``: attaching the
+    locator's selector would make the client rebuild it as "no object matched selector:
+    QHelpContentWidget" and throw the useful half away. And the menu has to be dismissed --
+    Assistant shows this one with ``QMenu::exec()``, and a menu left open blocks input to
+    everything behind it for every later test.
+    """
+    assistant.set_input_mode("native")
+    win = _main(assistant)
+    tree = win.locator("QHelpContentWidget")
+
+    with pytest.raises(LiberaQtTimeoutError) as exc:
+        tree.row(index=0).context_menu("___nope___", timeout=0)
+
+    assert "Open Link" in str(exc.value.__cause__), \
+        f"the menu's real entries were not reported: {exc.value.__cause__}"
+    assistant.wait_for_idle()
+    assert [w.title for w in assistant.windows] == ["Qt Assistant"], \
+        "the failed walk left its context menu open"
+
+
 def test_menu_trigger_in_synthetic_mode_still_activates_the_entry(assistant):
     """The queued-trigger fallback activates without opening a single menu on screen.
 

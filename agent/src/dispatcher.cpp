@@ -373,6 +373,29 @@ void Dispatcher::registerBuiltins()
         return WidgetBackend::tabSelect(object, params);
     });
 
+    // Right-click the target (a widget or an item-view cell), then walk `path` inside the menu
+    // that appears. Native-only by nature: a context menu is built inside contextMenuEvent, so
+    // there is no QAction to reach without genuinely opening it.
+    registerAsyncCommand(QStringLiteral("widget.context_menu"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
+        const QString handle = params.value(QStringLiteral("handle")).toString();
+        auto *widget = qobject_cast<QWidget *>(m_registry.resolve(handle));
+        if (!widget) {
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("context menus need a widget target"));
+        }
+        const QStringList path = params.value(QStringLiteral("path")).toString()
+                                     .split(QLatin1Char('>'), Qt::SkipEmptyParts);
+        if (path.isEmpty())
+            throw CommandError(ErrorCode::InvalidParams, QStringLiteral("'path' is required"));
+        QPoint point;
+        if (!WidgetBackend::interactionPointFor(widget, handle, &point)) {
+            throw CommandError(ErrorCode::NotActionable,
+                               QStringLiteral("cannot compute a point to right-click"));
+        }
+        menu_walker::walkContextMenu(widget, point, path, resolve, reject);
+    });
+
     registerAsyncCommand(QStringLiteral("widget.menu_trigger"),
                          [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
         QObject *window = m_registry.resolve(params.value(QStringLiteral("window")).toString());

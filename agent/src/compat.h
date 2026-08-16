@@ -146,6 +146,15 @@ inline void postKey(QWindow *window, QEvent::Type type, int key, Qt::KeyboardMod
     QWindowSystemInterface::handleKeyEvent(window, type, key, mods, text);
 }
 
+// The pointer crossing into a window, which the platform reports as its own event rather than
+// deriving it from a move. Some widgets refuse input until they have seen one: QMenu guards its
+// whole mousePressEvent behind `hasReceievedEnter`, so an injected click on a menu that was
+// never entered is silently discarded -- in both delivery modes, since neither generates it.
+inline void postEnter(QWindow *window, const QPointF &local, const QPointF &global)
+{
+    QWindowSystemInterface::handleEnterEvent(window, local, global);
+}
+
 inline void postWheel(QWindow *window, const QPointF &local, const QPointF &global,
                       QPoint pixelDelta, QPoint angleDelta, Qt::KeyboardModifiers mods)
 {

@@ -8,11 +8,14 @@
 #include <QAbstractScrollArea>
 #include <QApplication>
 #include <QContextMenuEvent>
+#include <QEnterEvent>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMouseEvent>
 #include <QPoint>
+#include <QPointer>
 #include <QStringList>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
 #include <QWindow>
@@ -148,6 +151,30 @@ void nativeMouse(const Target &target, QEvent::Type type, Qt::MouseButtons butto
                       QPointF(target.global), buttons, button, type, mods);
 }
 
+// The pointer arriving in the target's window. A real pointer crosses a boundary to get
+// anywhere, and the platform reports that crossing separately from the move.
+//
+// Popups need a second, direct delivery. QMenu::mousePressEvent begins
+// `if (!d->hasReceievedEnter) return;`, and that flag is only set by QMenu::enterEvent -- but
+// QWidgetWindow::handleEnterLeaveEvent deliberately *discards* platform enter events for the
+// active popup, on the grounds that it will fake its own from the following mouse move. For
+// injected input it never does, so the first press on a freshly opened menu is swallowed
+// without a trace and only a second click works. Sending the QEnterEvent straight at the widget
+// sets the flag the way the real pointer would have.
+void enterWindow(const Target &target)
+{
+    compat::postEnter(target.window, QPointF(target.window->mapFromGlobal(target.global)),
+                      QPointF(target.global));
+
+    QWidget *top = target.widget->window();
+    if (top->windowType() != Qt::Popup)
+        return;
+    const QPointF local(target.point);
+    const QPointF inWindow(target.widget->mapTo(top, target.point));
+    QEnterEvent enter(local, inWindow, QPointF(target.global));
+    QApplication::sendEvent(target.widget, &enter);
+}
+
 // The widget Qt would hand a mouse event to at this point. childAt() walks the widget hierarchy
 // itself, unlike QApplication::widgetAt(), which asks the window system and so answers nothing
 // when another application's window happens to be in front.
@@ -156,6 +183,25 @@ QWidget *widgetUnder(const Target &target)
     QWidget *top = target.widget->window();
     QWidget *hit = top->childAt(top->mapFromGlobal(target.global));
     return hit ? hit : top;
+}
+
+// The QContextMenuEvent that follows a right-click, for the synthetic path only.
+//
+// Native input needs none: QWidgetWindow::handleMouseEvent generates the context-menu event
+// itself from a right button delivered through it, exactly as it does for the platform's own
+// input. Posting one as well opens the menu *twice* -- and the second menu outlives whatever
+// the first one did, which reads as "the click activated nothing and left a menu on screen".
+// Synthetic delivery goes straight at the widget and never passes through QWidgetWindow, so
+// there it really is missing and a right-click would otherwise just select.
+//
+// Posted rather than sent, because showing a context menu runs a nested event loop.
+void postContextMenuEvent(const Target &target, Qt::KeyboardModifiers mods)
+{
+    QWidget *receiver = widgetUnder(target);
+    QApplication::postEvent(receiver,
+                            new QContextMenuEvent(QContextMenuEvent::Mouse,
+                                                  receiver->mapFromGlobal(target.global),
+                                                  target.global, mods));
 }
 
 // Where a mouse event has to be delivered on the synthetic path, and the point in that widget's
@@ -344,9 +390,22 @@ void InputSynth::clickNative(QWidget *widget, const QPoint &point, Qt::MouseButt
 {
     const Target target = requireWindow(locate(widget, point));
     ensureActive(widget, target.window);
+    enterWindow(target);
     nativeMouse(target, QEvent::MouseMove, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
     nativeMouse(target, QEvent::MouseButtonPress, button, button, Qt::NoModifier);
     nativeMouse(target, QEvent::MouseButtonRelease, Qt::NoButton, button, Qt::NoModifier);
+}
+
+void InputSynth::contextClickNative(QWidget *widget, const QPoint &point)
+{
+    const Target target = requireWindow(locate(widget, point));
+    ensureActive(widget, target.window);
+    nativeMouse(target, QEvent::MouseMove, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    nativeMouse(target, QEvent::MouseButtonPress, Qt::RightButton, Qt::RightButton,
+                Qt::NoModifier);
+    nativeMouse(target, QEvent::MouseButtonRelease, Qt::NoButton, Qt::RightButton,
+                Qt::NoModifier);
+    // No QContextMenuEvent by hand: QWidgetWindow makes one from the right button above.
 }
 
 QVariantMap InputSynth::click(ObjectRegistry &registry, const QVariantMap &params)
@@ -363,9 +422,10 @@ QVariantMap InputSynth::click(ObjectRegistry &registry, const QVariantMap &param
     if (modeFor(params) == Mode::Native) {
         requireWindow(target);
         ensureActive(widget, target.window);
-        // The move comes first because real input always does. Hover highlighting, tooltips, menu
-        // tracking and the enter/leave pair all key off the pointer arriving before the button
-        // goes down, and a widget that only reacts once hovered ignores a click without it.
+        // Enter, then move, because real input always arrives that way. Hover highlighting,
+        // tooltips and menu tracking all key off the pointer arriving before the button goes
+        // down, and a widget that only reacts once entered ignores a click without it.
+        enterWindow(target);
         nativeMouse(target, QEvent::MouseMove, Qt::NoButton, Qt::NoButton, mods);
         for (int i = 0; i < count; ++i) {
             nativeMouse(target, QEvent::MouseButtonPress, button, button, mods);
@@ -388,17 +448,9 @@ QVariantMap InputSynth::click(ObjectRegistry &registry, const QVariantMap &param
         }
     }
 
-    // A context menu is not derived from the mouse event even on the native path: on a real
-    // right-click the *platform* sends a separate QContextMenuEvent, and no platform is involved
-    // here. Without one, a right-click selects the item and nothing more. Posted rather than sent,
-    // because showing a context menu runs a nested event loop.
-    if (button == Qt::RightButton) {
-        QWidget *receiver = widgetUnder(target);
-        QApplication::postEvent(receiver,
-                                new QContextMenuEvent(QContextMenuEvent::Mouse,
-                                                      receiver->mapFromGlobal(target.global),
-                                                      target.global, mods));
-    }
+    // Only the synthetic path needs one; see postContextMenuEvent.
+    if (button == Qt::RightButton && modeFor(params) == Mode::Synthetic)
+        postContextMenuEvent(target, mods);
 
     QVariantMap out;
     out.insert(QStringLiteral("pos"), QVariantList{point.x(), point.y()});

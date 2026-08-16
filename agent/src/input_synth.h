@@ -45,6 +45,11 @@ public:
     static void clickNative(QWidget *widget, const QPoint &point,
                             Qt::MouseButton button = Qt::LeftButton);
 
+    // A native right-click plus the QContextMenuEvent the platform sends after one -- without
+    // it a synthesised right-click selects and nothing more. What context-menu walking starts
+    // with.
+    static void contextClickNative(QWidget *widget, const QPoint &point);
+
     static QVariantMap click(ObjectRegistry &registry, const QVariantMap &params);
     static QVariantMap hover(ObjectRegistry &registry, const QVariantMap &params);
     static QVariantMap key(ObjectRegistry &registry, const QVariantMap &params);
