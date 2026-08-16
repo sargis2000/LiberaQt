@@ -331,6 +331,7 @@ Grammar in `docs/SELECTORS.md`. Four rules that trip people up:
 | Document | When to read |
 |----------|--------------|
 | `docs/ARCHITECTURE.md` | How the pieces fit together and why |
+| `docs/ACTIONS.md` | Every action method: native vs synthetic, covered vs not, per-mode limits |
 | `docs/PROTOCOL.md` | Adding commands, wire format |
 | `docs/SELECTORS.md` | Selector grammar, matching rules, object maps |
 | `docs/API.md` | Python API design philosophy |

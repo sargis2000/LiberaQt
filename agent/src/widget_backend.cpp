@@ -11,7 +11,10 @@
 #include <QAbstractSpinBox>
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
+#include <QRadioButton>
+#include <QStyleOptionButton>
 #include <QItemSelectionModel>
 #include <QMenu>
 #include <QMenuBar>
@@ -202,6 +205,26 @@ QString WidgetBackend::actionabilityProblem(QObject *object)
 
 bool WidgetBackend::interactionPoint(QObject *object, QPoint *out)
 {
+    // A checkbox or radio button only reacts over its indicator and label; a layout routinely
+    // stretches the widget far wider than that, leaving the geometric centre in a dead zone a
+    // user's click would miss too. Aim where the style says the clickable region is. Found by
+    // Designer's startup checkbox: 529px wide, ~200px of it clickable.
+    if (auto *check = qobject_cast<QCheckBox *>(object)) {
+        QStyleOptionButton option;
+        option.initFrom(check);
+        option.text = check->text();
+        *out = check->style()->subElementRect(QStyle::SE_CheckBoxClickRect, &option, check)
+                   .center();
+        return true;
+    }
+    if (auto *radio = qobject_cast<QRadioButton *>(object)) {
+        QStyleOptionButton option;
+        option.initFrom(radio);
+        option.text = radio->text();
+        *out = radio->style()->subElementRect(QStyle::SE_RadioButtonClickRect, &option, radio)
+                   .center();
+        return true;
+    }
     if (auto *widget = qobject_cast<QWidget *>(object)) {
         *out = widget->rect().center();
         return true;

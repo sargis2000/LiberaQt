@@ -384,15 +384,17 @@ class Locator:
         """
         self.fill("", timeout=timeout)
 
-    def set_checked(self, checked: bool = True, timeout: float | None = None) -> None:
+    def set_checked(self, checked: bool = True, timeout: float | None = None,
+                    mode: str | None = None) -> None:
         """Set a checkbox or toggle to a state, clicking only if it is not already there.
 
         Args:
             checked: Desired state.
             timeout: Seconds to wait for the object to become clickable.
+            mode: ``"native"`` or ``"synthetic"`` for this call only.
         """
         if self.is_checked != checked:
-            self.click(timeout=timeout)
+            self.click(timeout=timeout, mode=mode)
 
     def check(self, **kw: Any) -> None:
         """Ensure the object is checked.
