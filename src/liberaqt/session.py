@@ -172,6 +172,12 @@ class Session:
             opts["animations"] = animations
         if network is not None:
             opts["network"] = network
+        # The agent takes its idle deadline from `timeout_ms` *in the parameters*, and defaults
+        # to 10s when it is absent -- the envelope's timeout only governs how long the client
+        # waits for a reply. Without this line every wait_for_idle(timeout=...) was silently
+        # capped at ten seconds, which is nowhere near enough for an application that has just
+        # been told to do real work.
+        opts["timeout_ms"] = int(self.timeouts.resolve(timeout) * 1000)
         self.call(Cmd.WAIT_IDLE, opts, timeout=timeout)
 
     def grab(self, handle: str | None = None, path: str | None = None) -> bytes:

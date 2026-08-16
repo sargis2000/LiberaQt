@@ -16,6 +16,10 @@ Two things learned the hard way and encoded below:
 * **Give the project a unique name.** Libero refuses one that already exists, and a leftover
   directory is easy to end up with because a previous run may still hold its files open. The
   refusal surfaces as an unexpected dialog, not as an error from the step that caused it.
+
+* **Bring a dock forward before touching it.** Libero tabifies its docks, and Qt parks the
+  inactive pages at negative coordinates -- so the Design Flow view is `isVisible()` while
+  sitting somewhere no click can reach. Native actionability says exactly that if you forget.
 """
 
 import os
@@ -173,3 +177,72 @@ def test_the_design_hierarchy_dock_is_readable(project):
     dock = win.locator("QDockWidget[objectName='Design Hierarchy']")
     expect(dock).to_exist()
     assert dock.locator("QTreeView").count >= 1
+
+
+def test_the_imported_module_becomes_the_design_root(project):
+    """Build the hierarchy, then make the module the root -- both as a user does them.
+
+    ``Build Hierarchy`` is a plain ``QPushButton`` (not a QAction), and the tree lists nothing
+    until it has been pressed. ``Set As Root`` exists only in the module's context menu, so this
+    is a real right-click and a real click on the entry it opens. Until a root is set, Libero
+    refuses to synthesise -- its toolbar tooltip just reads "Please select a root".
+    """
+    app = project
+    win = _main(app)
+
+    for button in win.locator("QPushButton").all():
+        if "Build Hierarchy" in (button.text or ""):
+            button.click()
+            break
+    else:
+        pytest.fail("no Build Hierarchy button on the Design Hierarchy dock")
+    _settle(app, 6.0, timeout=180.0)
+
+    hierarchy = win.locator("Hierview::DHierView").first
+    # The module reads "counter (counter.v) [work]", never the bare module name.
+    hierarchy.row(has_text=f"{HDL_MODULE} ({HDL_MODULE}.v)").context_menu("Set As Root")
+    _settle(app, 3.0)
+    _assert_no_unexpected_dialog(app, set())
+
+
+def test_synthesis_runs_from_the_flow_view(project, e2e_project_dir):
+    """Run Synthesize from the Design Flow, and wait for Synplify to produce a netlist.
+
+    Two things this needs that nothing else in the suite does. The Design Flow dock has to be
+    brought forward first: Libero tabifies its docks, and Qt parks the inactive pages at
+    negative coordinates, so the flow view is `isVisible()` while being somewhere no click can
+    reach -- the actionability check says exactly that if you forget. And "Synthesize" has to be
+    matched exactly, because `has_text=` means *containing* and "Verify Pre-Synthesized Design"
+    contains it.
+
+    Completion is asserted on the netlist appearing on disk rather than on anything in the UI:
+    synthesis is a separate process, and its output file is the unambiguous evidence it ran.
+    """
+    app = project
+    win = _main(app)
+
+    docks = next(bar for bar in win.locator("QTabBar").all()
+                 if bar.is_visible and bar["count"] == 6)
+    docks.select_tab(text="Design Flow")
+    _settle(app, 2.0)
+
+    # Every action waits for the UI to settle afterwards, and clicking Run makes Libero busy for
+    # as long as Synplify takes -- far past the 10s the suite uses everywhere else.
+    flow = win.locator("Flowview::View").first
+    with app._session.timeouts.override(300.0):
+        flow.item("Synthesize").context_menu("Run")
+
+    synthesis_dir = e2e_project_dir / PROJECT_NAME / "synthesis"
+    deadline = time.time() + 600
+    netlist = []
+    while time.time() < deadline:
+        netlist = list(synthesis_dir.glob("*.vm")) if synthesis_dir.is_dir() else []
+        if netlist:
+            break
+        time.sleep(2.0)
+
+    produced = sorted(p.name for p in synthesis_dir.glob("*")) if synthesis_dir.is_dir() else []
+    assert netlist, (
+        f"synthesis produced no netlist within 10 minutes; "
+        f"{synthesis_dir} holds {produced[:20] or 'nothing'}"
+    )

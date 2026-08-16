@@ -787,6 +787,28 @@ class Locator:
         result = self._session.call(Cmd.ITEM_RECT, params)
         return _HandleLocator(self._session, self._selector, result["handle"])
 
+    def item(self, text: str) -> Locator:
+        """Locate an item by its exact text, at any depth.
+
+        The exact-match counterpart to :meth:`row`, whose ``has_text`` means *containing*. Reach
+        for this whenever one label is a substring of another: searching a Libero design flow
+        for "Synthesize" with ``row()`` finds "Verify Pre-Synthesized Design" first.
+
+        The search descends the whole tree and fetches lazily populated branches on the way, so
+        a node the view has never expanded is still found.
+
+        Args:
+            text: The item's text, matched exactly.
+
+        Returns:
+            A locator bound to the matched item.
+
+        Raises:
+            ObjectNotFoundError: No item has that exact text.
+        """
+        result = self._session.call(Cmd.ITEM_RECT, {"handle": self.resolve(), "text": text})
+        return _HandleLocator(self._session, self._selector, result["handle"])
+
     def cell(self, row: int, column: int | str) -> Locator:
         """Locate a single cell in an item view.
 
