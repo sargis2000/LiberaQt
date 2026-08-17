@@ -1,8 +1,12 @@
 # The action surface: native vs synthetic
 
-Every interactive method the client offers, in one table. `integration/test_actions.py` and
-`integration/test_input.py` assert the claims below against real applications; when the table
-and those tests disagree, the tests are the ones that ran.
+Every interactive method the client offers, in one table.
+
+> Every claim below was asserted against real applications by `integration/test_actions.py` and
+> `integration/test_input.py` up to 2026-08-17, when that suite was deleted. The table is now
+> **documentation, not enforcement**: it records what was measured on Qt 6.7 (Assistant, Designer,
+> qmleasing) and Qt 5.15 (Libero SoC), and nothing will notice if a change makes it wrong. Restore
+> the suite with `git checkout b51cfa0 -- integration/` before relying on any row.
 
 The two modes, in one sentence each:
 

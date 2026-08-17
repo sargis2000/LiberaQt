@@ -21,8 +21,11 @@ jobs:
       - run: ruff check src tests
       - run: pytest tests/ -q
 
+  # Builds the agent on every supported ABI. This is a compile check only: nothing here runs the
+  # agent, because the tests that drove real Qt applications have been removed. A green matrix
+  # therefore says the C++ still builds against Qt 5.15 and 6.7 -- not that it works.
   agent:
-    name: Agent + integration (Qt ${{ matrix.qt }}, ${{ matrix.os }})
+    name: Agent build (Qt ${{ matrix.qt }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -35,45 +38,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # qttools brings Designer, Assistant and Linguist -- the applications the integration suite
-      # drives. They ship inside the Qt installation, so they always match the agent's ABI.
       - uses: jurplel/install-qt-action@v4
         with:
           version: ${{ matrix.qt }}
-          modules: ${{ startsWith(matrix.qt, '6') && 'qtdeclarative qttools' || 'qttools' }}
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - run: pip install -e ".[dev]"
+          modules: ${{ startsWith(matrix.qt, '6') && 'qtdeclarative' || '' }}
 
       - name: Build agent
         run: |
           cmake -S agent -B build/agent -DCMAKE_BUILD_TYPE=Release
           cmake --build build/agent --config Release --parallel
           cmake --install build/agent --prefix ${{ github.workspace }}/agents/${{ matrix.tag }}
-
-      # The suite locates Designer/Assistant/Linguist beside qmake, which install-qt-action puts
-      # on PATH, so neither leg has to hardcode a Qt layout.
-      - name: Integration tests against Qt's own applications (Linux)
-        if: runner.os == 'Linux'
-        env:
-          LIBERAQT_AGENT_PATH: ${{ github.workspace }}/agents
-        run: xvfb-run -a pytest integration/ -q --liberaqt-qt ${{ matrix.qt }}
-
-      - name: Integration tests against Qt's own applications (Windows)
-        if: runner.os == 'Windows'
-        env:
-          LIBERAQT_AGENT_PATH: ${{ github.workspace }}/agents
-        run: pytest integration/ -q --liberaqt-qt ${{ matrix.qt }}
-
-      - name: Upload failure traces
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: liberaqt-trace-${{ matrix.tag }}
-          path: liberaqt-trace/
 
       - name: Upload agent artifact
         uses: actions/upload-artifact@v4

@@ -1,7 +1,6 @@
 # Repo-level liberaqt config, picked up by the pytest plugin (rootdir/liberaqt.toml).
 #
-# The integration suite under integration/ drives Qt's own shipped applications and resolves them
-# itself, so nothing here points at an executable. This file exists to document the section and to
-# give `liberaqt run` a default timeout.
+# No `executable` here on purpose: this repository has no application of its own to point at. The
+# file exists to document the section and to give `liberaqt run` a default timeout.
 [liberaqt]
 timeout = 10.0

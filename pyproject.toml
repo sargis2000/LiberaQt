@@ -64,7 +64,6 @@ convention = "google"
 # Test names and their bodies are the documentation; a docstring is added only when the *reason*
 # for a test is not obvious from reading it.
 "tests/**" = ["D100", "D101", "D102", "D103", "D104"]
-"integration/**" = ["D100", "D101", "D102", "D103", "D104"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

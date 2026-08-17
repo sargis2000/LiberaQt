@@ -6,7 +6,6 @@
 liberaqt/
 ├── src/liberaqt/        Python client (pure Python, no Qt dependency)
 ├── agent/               C++ Qt agent (CMake)
-├── integration/         Tests driving Qt's own shipped applications
 ├── docs/                Design documents (this folder)
 └── tests/               Unit tests for the client (no Qt needed)
 ```
@@ -26,15 +25,19 @@ The install layout must be `<prefix>/plugins/generic/libliberaqt.so` — that is
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/            # unit tests, no Qt required
-pytest integration/      # drives Qt Designer/Assistant/Linguist; needs a built agent
+pytest tests/            # unit tests of the client, no Qt required
 ```
 
-The integration suite deliberately uses no purpose-built sample application. It drives Qt's own
-programs, which are large, were written with no knowledge of this project, and ship inside the Qt
-installation -- so they are guaranteed to match the agent's Qt version and compiler ABI. Point it
-at a Qt installation with `--liberaqt-qt-bin=<dir>`, `LIBERAQT_QT_BIN` or `QTDIR`; otherwise it
-looks beside `qmake` on `PATH`. Each fixture skips when its application is missing.
+That is the entire automated suite, and it exercises **no** agent code. Nothing here starts a Qt
+application, so an agent change is unverified until you drive a real program by hand — see
+"Testing" in the README. There is deliberately no purpose-built sample application to test
+against: a toy agrees with whatever the driver happens to do, and three bugs that made LiberaQT
+unusable on real software once sat undetected behind a green sample suite.
+
+A suite that drove Qt's own shipped programs (Designer, Assistant, Linguist, qdbusviewer,
+qmleasing) and Microchip Libero SoC lived in `integration/` until 2026-08-17. If live-application
+coverage is wanted again, restore it rather than starting over: `git checkout b51cfa0 --
+integration/`.
 
 ## Rules of thumb
 

@@ -54,36 +54,37 @@ against `qmleasing` (a real Qt app with a Quick window):
   cannot suggest a QML selector.
 * `Window.kind` reports a Quick top-level as `"widget"`, which is also wrong.
 
-`integration/test_qmleasing.py` covers the working half and carries an `xfail(strict=True)` on the
-tree walk, so fixing `TODO(m0)` turns it XPASS and CI demands the marker be removed.
+Nothing in the repository exercises any of this any more — see below.
 
-## No sample application — test against real Qt programs
+## There are no tests against a running application
 
-There is deliberately no purpose-built sample app in this repository. It was removed because a toy
-application agrees with whatever the driver happens to do: three separate bugs that made LiberaQT
-unusable on real software sat undetected behind a green sample suite (see the git history for
-`sync.wait_idle`, namespaced class names, and objectNames that are not bare identifiers).
+`tests/` is the whole suite: unit tests of the pure-Python client, with no Qt and no agent
+involved. The suite that drove real Qt applications was **deleted on request (2026-08-17)**; the
+files are in git history at `b51cfa0:integration/` if they are ever wanted back.
 
-`integration/` drives **Qt's own shipped applications** instead — Designer, Assistant and Linguist.
-They are large (Designer's main window alone holds ~190 objects, 56 scroll bars, 18 menus), were
-written with no knowledge of this project, and — decisively — ship inside the Qt installation, so
-they are built with exactly the Qt minor version and compiler ABI the matching agent needs. No
-other large Qt application is injectable without being rebuilt against the right toolchain.
+Know what that costs before trusting a green run, because the gap is large and quiet:
 
-Each app has a session-scoped fixture in `integration/conftest.py` that **skips** rather than fails
-when the application is absent. Qt is located from `--liberaqt-qt-bin=`, `LIBERAQT_QT_BIN`,
-`QTDIR`, then beside `qmake` on `PATH`. Pass the option with `=`: as a bare argument pytest treats
-the path as a positional test path and mis-detects the rootdir.
+* **Nothing verifies the agent at all.** Not one line of `agent/src/` is executed by `pytest
+  tests/`. CI still builds it on four ABIs, which is a compile check and nothing more.
+* **Nothing verifies that input works.** Native delivery, focus-on-click, the menu and popup
+  walks, reachability, the ABI resolution that picks a 32-bit MSVC agent for a 32-bit MSVC
+  application — all of it was covered only by the deleted suite.
+* **The `TODO(m0)` QML tree walk lost its tripwire.** An `xfail(strict=True)` used to fail the
+  moment somebody fixed it, forcing the marker off. Now it can be fixed, or re-broken, silently.
+* **Every claim in `docs/ACTIONS.md` is now unverified.** It was written to be asserted by
+  `integration/test_actions.py`; the words remain, the enforcement does not.
 
-What each target is worth keeping for:
+The reason that suite existed is worth restating, because it is the argument for ever bringing it
+back: there is deliberately no purpose-built sample app in this repository either. A toy
+application agrees with whatever the driver happens to do, and three separate bugs that made
+LiberaQT unusable on real software sat undetected behind a green sample suite (see the git history
+for `sync.wait_idle`, namespaced class names, and objectNames that are not bare identifiers). The
+replacement drove Qt's own shipped applications — Designer, Assistant, Linguist, qdbusviewer,
+qmleasing — plus Microchip Libero SoC on a different ABI entirely, and it kept finding real bugs
+right up to its deletion.
 
-| App | Why it earns its place |
-|-----|------------------------|
-| Designer | Modal startup dialog over a live main window; namespaced classes (`qdesigner_internal::NewFormWidget`); four named toolbars; the largest tree |
-| Assistant | Four named `QDockWidget`s, a real `QLineEdit` to type into, nested-scope searches |
-| Linguist | objectNames containing spaces and slashes (`comment/context view`), which only resolve through the quoted attribute form |
-| qdbusviewer | A main window with an **empty title**, a `QTabWidget`, and an application sitting in an error state (no session bus on Windows) |
-| qmleasing | The only QML coverage: a QWidget shell plus a separate Qt Quick top-level. Also the only `QSpinBox` |
+If tests against a live application are wanted again, restore from git rather than writing a
+sample app: `git checkout b51cfa0 -- integration/`.
 
 ## Commands
 
@@ -93,14 +94,13 @@ pip install -e ".[dev]"        # re-run after renaming or moving anything under 
 # What CI runs, verbatim:
 ruff check src tests           # note: src tests, not agent/ (that is C++)
 pytest tests/ -q               # unit tests, no Qt needed
-pytest integration/ -q --liberaqt-qt-bin="C:/Qt/6.7.3/mingw_64/bin"   # real Qt applications
 
 pytest tests/test_selectors.py::test_parse_type_with_nth -v   # single test
 ruff format src tests
 mypy src/liberaqt
 ```
 
-Integration tests find the agent via `LIBERAQT_AGENT_PATH` (a directory of `<tag>/` install
+The client finds the agent via `LIBERAQT_AGENT_PATH` (a directory of `<tag>/` install
 prefixes, which shadows the download cache), else the cache: `%LOCALAPPDATA%\liberaqt\agents\`
 on Windows, `$XDG_CACHE_HOME/liberaqt/agents/` elsewhere. Tag format is
 `qt<minor>-<platform>-<arch>-<compiler>`, e.g. `qt6.7-linux-x86_64-gcc`,
@@ -127,15 +127,9 @@ cmake --install build/agent --prefix "$env:LOCALAPPDATA\liberaqt\agents\qt6.7-wi
 
 Always `-G Ninja`: the "MinGW Makefiles" generator chokes on drive-letter colons.
 
-Running the integration tests needs Qt **locatable**, not on `PATH`: the applications load their
-own DLLs from their own directory. Any one of `--liberaqt-qt-bin=`, `LIBERAQT_QT_BIN`, `QTDIR` or
-`qmake` on `PATH` is enough, and with none of them every fixture skips with *"no Qt bin directory
-found"*. Setting `LIBERAQT_QT_BIN` once, persistently, is what makes the suite runnable from an
-IDE, where no command-line option is passed:
-
-```powershell
-[Environment]::SetEnvironmentVariable("LIBERAQT_QT_BIN", "C:\Qt\6.7.3\mingw_64\bin", "User")
-```
+Driving an application by hand does not need Qt on `PATH` — the application loads its own DLLs
+from its own directory. `LiberaQt.launch()` only needs the path to the executable and a matching
+agent installed under the tag `liberaqt doctor` reports.
 
 ## Python client (`src/liberaqt/`)
 
@@ -186,8 +180,9 @@ Guidelines: anything that can live in Python does; never throw across the Qt eve
 `#if QT_VERSION` in feature code.
 
 **Adding a command:** handler in `dispatcher.cpp` (runs on the GUI thread) → name in
-`protocol.Cmd` → client method → `docs/PROTOCOL.md` entry → test in `integration/` against
-whichever Qt application actually exercises it → conformance suite entry.
+`protocol.Cmd` → client method → `docs/PROTOCOL.md` entry → conformance suite entry. Nothing in
+the repository will exercise the handler, so drive it against a real application by hand before
+believing it works: every agent bug this project has had was found that way and by nothing else.
 
 **A command that lets the application run must be asynchronous.** Use `registerAsyncCommand` and
 resolve from the event loop. Blocking inside a handler — in particular pumping it with
@@ -282,9 +277,9 @@ Auto-loaded via the `pytest11` entry point once the package is installed. **Do n
 and pytest aborts. Only declare it when running against a source checkout that is not
 pip-installed.
 
-Note that `integration/` does **not** use these fixtures: it needs several different applications
-in one session, while `app` is built around a single configured `executable`. It defines its own
-per-application fixtures on top of `LiberaQt` directly.
+These fixtures are built around a *single* configured `executable`. A suite that needs several
+different applications in one session has to build its own on top of `LiberaQt` directly — which
+is what the deleted `integration/` suite did, and the reason it used none of these.
 
 Fixtures: `app` (per-test Application), `app_session` (session-scoped), `win`, `liberaqt`,
 `liberaqt_config`. Options: `--liberaqt-exe`, `--liberaqt-qt`, `--liberaqt-headless`,

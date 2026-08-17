@@ -158,23 +158,29 @@ cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR -DCMAKE_BUILD_TYPE=Rele
 cmake --build build/agent --parallel
 cmake --install build/agent --prefix ~/.cache/liberaqt/agents/qt6.7-linux-x86_64-gcc
 
-pytest tests/          # unit tests, no Qt needed
-pytest integration/    # drives Qt Designer, Assistant and Linguist
+pytest tests/          # unit tests of the client, no Qt needed
 ```
 
-## Testing against real applications
+## Testing
 
-There is no sample application in this repository. The integration suite drives Qt's own shipped
-programs -- Designer, Assistant and Linguist -- because a purpose-built sample agrees with
-whatever the driver happens to do, and a real application does not. They also ship inside the Qt
-installation, so they are guaranteed to match the agent's Qt version and compiler ABI.
+`pytest tests/` is the whole suite: unit tests of the pure-Python client, with no Qt and no agent
+involved. Nothing in the repository runs the agent, so a green suite says the client's parsing,
+selectors and error handling are sound -- it says nothing about whether the agent works.
 
-```bash
-pytest integration/ --liberaqt-qt-bin=/path/to/Qt/6.7.3/gcc_64/bin
+There is no sample application here either, and deliberately so: a purpose-built sample agrees
+with whatever the driver happens to do, while a real application does not. Verify agent changes by
+driving a real Qt program yourself, which needs nothing but a matching agent installed:
+
+```python
+from liberaqt import liberaqt
+
+with liberaqt() as lq:
+    app = lq.launch("/path/to/Qt/6.7.3/gcc_64/bin/assistant")
+    win = app.window(title="Qt Assistant")
+    print(win.locator("*").count)
 ```
 
-With no option it looks at `LIBERAQT_QT_BIN`, `QTDIR`, then beside `qmake` on `PATH`, and skips
-any application that is not installed.
+`liberaqt doctor <exe>` first, to check the binary is injectable and an agent matches its ABI.
 
 ## Licence
 

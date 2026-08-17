@@ -11,9 +11,10 @@ Goal: `click a button in a QWidget app from Python`, end to end, Linux + Qt 6.7 
 * Agent: object registry, `object.find` with type + objectName only, `input.click`.
 * Client: transport, launcher, `Application`, `Window`, minimal `Locator.click()`.
 * One passing test against a real Qt application.
-* CI: Linux build of the agent, run the integration suite under `xvfb-run`.
+* CI: Linux build of the agent.
 
-Exit criterion: `pytest integration/` is green in CI.
+Exit criterion: was `pytest integration/` green in CI. That suite was deleted on 2026-08-17, so
+nothing now enforces it; CI builds the agent on four ABIs and runs the client's unit tests.
 
 ## Milestone 1 — Usable for real widget tests (4 weeks)
 
