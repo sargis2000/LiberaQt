@@ -125,8 +125,17 @@ cmake --build build/agent --parallel
 cmake --install build/agent --prefix "$env:LOCALAPPDATA\liberaqt\agents\qt6.7-windows-x86_64-mingw"
 ```
 
-Always `-G Ninja`: the "MinGW Makefiles" generator chokes on drive-letter colons. Running the
-integration tests needs `C:\Qt\6.7.3\mingw_64\bin` on `PATH`.
+Always `-G Ninja`: the "MinGW Makefiles" generator chokes on drive-letter colons.
+
+Running the integration tests needs Qt **locatable**, not on `PATH`: the applications load their
+own DLLs from their own directory. Any one of `--liberaqt-qt-bin=`, `LIBERAQT_QT_BIN`, `QTDIR` or
+`qmake` on `PATH` is enough, and with none of them every fixture skips with *"no Qt bin directory
+found"*. Setting `LIBERAQT_QT_BIN` once, persistently, is what makes the suite runnable from an
+IDE, where no command-line option is passed:
+
+```powershell
+[Environment]::SetEnvironmentVariable("LIBERAQT_QT_BIN", "C:\Qt\6.7.3\mingw_64\bin", "User")
+```
 
 ## Python client (`src/liberaqt/`)
 
