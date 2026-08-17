@@ -226,11 +226,16 @@ def test_synthesis_runs_from_the_flow_view(project, e2e_project_dir):
     docks.select_tab(text="Design Flow")
     _settle(app, 2.0)
 
-    # Every action waits for the UI to settle afterwards, and clicking Run makes Libero busy for
-    # as long as Synplify takes -- far past the 10s the suite uses everywhere else.
+    # Two different waits, deliberately different lengths. Settling after the click takes as long
+    # as Synplify does, far past the 10s the suite uses everywhere else -- hence the session
+    # override. But the action's own retry window stays short: a missing menu entry is not going
+    # to appear, and letting it inherit 300s means 4800 right-clicks before the failure is
+    # reported. (Which is what a missing 'Run' looks like: run this test on its own and Libero
+    # offers only "Import Files..., Edit Profile..., Help", because the tests above it are what
+    # import the HDL and set the root.)
     flow = win.locator("Flowview::View").first
     with app._session.timeouts.override(300.0):
-        flow.item("Synthesize").context_menu("Run")
+        flow.item("Synthesize").context_menu("Run", timeout=15.0)
 
     synthesis_dir = e2e_project_dir / PROJECT_NAME / "synthesis"
     deadline = time.time() + 600

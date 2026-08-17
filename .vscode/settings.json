@@ -1,0 +1,14 @@
+{
+    "python.testing.pytestArgs": [
+        "integration"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./integration",
+        "-p",
+        "*test*.py"
+    ]
+}
