@@ -1,0 +1,662 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sargis Khachatryan
+#include "dispatcher.h"
+
+#include "compat.h"
+#include "idle_tracker.h"
+#include "input_synth.h"
+#include "menu_walker.h"
+#include "meta_invoke.h"
+#include "object_registry.h"
+#include "screenshot.h"
+#include "signal_waiter.h"
+#include "selector_engine.h"
+#include "value_codec.h"
+#include "widget_backend.h"
+
+#include <cstdlib>
+#include <memory>
+
+#include <QAction>
+#include <QComboBox>
+#include <QCoreApplication>
+#include <QMenuBar>
+#include <QStringList>
+#include <QPointer>
+#include <QTimer>
+#include <QWidget>
+#include <QVariantList>
+
+namespace liberaqt {
+
+namespace ErrorCode {
+const char *NotFound = "not_found";
+const char *Ambiguous = "ambiguous";
+const char *Stale = "stale";
+const char *NotActionable = "not_actionable";
+const char *Unsupported = "unsupported";
+const char *InvalidParams = "invalid_params";
+const char *Internal = "internal";
+const char *Timeout = "timeout";
+}
+
+Dispatcher::Dispatcher(ObjectRegistry &registry)
+    : m_registry(registry)
+{
+    registerBuiltins();
+}
+
+QStringList Dispatcher::commandNames() const
+{
+    QStringList names = m_handlers.keys();
+    names += m_asyncHandlers.keys();
+    names.sort();
+    return names;
+}
+
+void Dispatcher::registerCommand(const QString &name, Handler handler)
+{
+    m_handlers.insert(name, std::move(handler));
+}
+
+void Dispatcher::registerAsyncCommand(const QString &name, AsyncHandler handler)
+{
+    m_asyncHandlers.insert(name, std::move(handler));
+}
+
+// Input handlers only *queue* their events: native input goes into the window-system queue, which
+// the platform event dispatcher drains on its next pass. Answering straight away would race the
+// application -- the client's next command could arrive before the click had been handled, which
+// is exactly how a synthesised click ends up looking as though nothing happened at all. So every
+// input command is asynchronous and replies once the queue has been drained.
+//
+// Two turns rather than one, because whether "flush the window-system queue" comes before or
+// after "fire zero-timers" within a single pass is a property of the platform dispatcher, not
+// something worth depending on. Neither turn costs wall-clock time. A nested event loop -- the
+// modal dialog the click just opened -- runs zero-timers too, so the reply is never stranded.
+void Dispatcher::registerInputCommand(const QString &name, Handler handler)
+{
+    registerAsyncCommand(name, [handler](const QVariantMap &params, Resolver resolve, Rejecter) {
+        // Throwing here is fine: handle() wraps the call and turns it into a rejection.
+        const QVariant result = handler(params);
+        QTimer::singleShot(0, qApp, [resolve, result] {
+            QTimer::singleShot(0, qApp, [resolve, result] { resolve(result); });
+        });
+    });
+}
+
+namespace {
+
+QVariantMap okResponse(const QVariant &id, const QVariant &result)
+{
+    QVariantMap response;
+    response.insert(QStringLiteral("id"), id);
+    response.insert(QStringLiteral("ok"), true);
+    response.insert(QStringLiteral("result"), result);
+    return response;
+}
+
+QVariantMap errorResponse(const QVariant &id, const QString &code, const QString &message,
+                          const QVariantMap &data = {})
+{
+    QVariantMap error;
+    error.insert(QStringLiteral("code"), code);
+    error.insert(QStringLiteral("message"), message);
+    if (!data.isEmpty())
+        error.insert(QStringLiteral("data"), data);
+    QVariantMap response;
+    response.insert(QStringLiteral("id"), id);
+    response.insert(QStringLiteral("ok"), false);
+    response.insert(QStringLiteral("error"), error);
+    return response;
+}
+
+} // namespace
+
+void Dispatcher::handle(const QVariantMap &request, Reply reply)
+{
+    const QVariant id = request.value(QStringLiteral("id"));
+    const QString cmd = request.value(QStringLiteral("cmd")).toString();
+    const QVariantMap params = request.value(QStringLiteral("params")).toMap();
+
+    const auto async = m_asyncHandlers.constFind(cmd);
+    if (async != m_asyncHandlers.constEnd()) {
+        // Guard against a handler that resolves twice, or resolves after rejecting: the client
+        // correlates on id, so a duplicate reply would be attributed to a later command.
+        auto answered = std::make_shared<bool>(false);
+        Resolver resolve = [reply, id, answered](const QVariant &result) {
+            if (*answered)
+                return;
+            *answered = true;
+            reply(okResponse(id, result));
+        };
+        Rejecter reject = [reply, id, answered](const CommandError &err) {
+            if (*answered)
+                return;
+            *answered = true;
+            reply(errorResponse(id, err.code, err.message, err.data));
+        };
+        try {
+            (*async)(params, resolve, reject);
+        } catch (const CommandError &err) {
+            reject(err);
+        } catch (const std::exception &err) {
+            reject(CommandError(ErrorCode::Internal, QString::fromUtf8(err.what())));
+        }
+        return;
+    }
+
+    const auto it = m_handlers.constFind(cmd);
+    if (it == m_handlers.constEnd()) {
+        reply(errorResponse(id, QString::fromLatin1(ErrorCode::Unsupported),
+                            QStringLiteral("unknown command: %1").arg(cmd)));
+        return;
+    }
+
+    // A handler must never let an exception escape into the Qt event loop.
+    try {
+        reply(okResponse(id, (*it)(params)));
+    } catch (const CommandError &err) {
+        reply(errorResponse(id, err.code, err.message, err.data));
+    } catch (const std::exception &err) {
+        reply(errorResponse(id, QString::fromLatin1(ErrorCode::Internal),
+                            QString::fromUtf8(err.what())));
+    }
+}
+
+void Dispatcher::registerBuiltins()
+{
+    // ---- session ---------------------------------------------------------
+    registerCommand(QStringLiteral("session.ping"), [](const QVariantMap &) -> QVariant {
+        QVariantMap out;
+        out.insert(QStringLiteral("pong"), true);
+        return out;
+    });
+
+    registerCommand(QStringLiteral("session.info"), [](const QVariantMap &) -> QVariant {
+        QVariantMap out;
+        out.insert(QStringLiteral("qt"), QString::fromUtf8(qVersion()));
+        out.insert(QStringLiteral("pid"), QCoreApplication::applicationPid());
+        out.insert(QStringLiteral("app"), QCoreApplication::applicationName());
+        return out;
+    });
+
+    registerCommand(QStringLiteral("session.quit"), [](const QVariantMap &params) -> QVariant {
+        const bool force = params.value(QStringLiteral("force")).toBool();
+        if (force)
+            std::_Exit(0);
+        QCoreApplication::quit();
+        return QVariantMap{};
+    });
+
+    // ---- discovery -------------------------------------------------------
+    registerCommand(QStringLiteral("window.list"), [this](const QVariantMap &) -> QVariant {
+        return WidgetBackend::listWindows(m_registry);
+    });
+
+    registerCommand(QStringLiteral("object.find"), [this](const QVariantMap &params) -> QVariant {
+        const Selector selector = Selector::fromJson(
+            params.value(QStringLiteral("selector")).toMap());
+        QObject *root = m_registry.resolveOrNull(
+            params.value(QStringLiteral("root")).toString());
+
+        SelectorEngine engine(m_registry);
+        const auto matches = engine.find(selector, root,
+                                         params.value(QStringLiteral("limit")).toInt());
+
+        QVariantList handles;
+        for (QObject *o : matches)
+            handles.append(m_registry.handleFor(o));
+
+        QVariantMap out;
+        out.insert(QStringLiteral("handles"), handles);
+        if (handles.isEmpty()) {
+            // Near misses are what turn "not found" from a dead end into a diagnosis.
+            out.insert(QStringLiteral("near_misses"), engine.nearMisses(selector, root, 5));
+        }
+        return out;
+    });
+
+    registerCommand(QStringLiteral("object.info"), [this](const QVariantMap &params) -> QVariant {
+        const QString handle = params.value(QStringLiteral("handle")).toString();
+        QObject *object = m_registry.resolve(handle);
+        // A composite handle names a cell inside the view, so describe the cell, not the view.
+        const QVariantMap info = WidgetBackend::describeItem(object, handle, m_registry);
+        if (params.value(QStringLiteral("require_actionable")).toBool()) {
+            // Reachability (modal in front, covered, parked off-window) is only demanded of
+            // native input; the client forwards the action's mode here so the check matches
+            // the delivery the action will actually use.
+            const bool native = InputSynth::modeOf(params) == InputSynth::Mode::Native;
+            const QString why = WidgetBackend::actionabilityProblem(object, native);
+            if (!why.isEmpty())
+                throw CommandError(ErrorCode::NotActionable, why, info);
+        }
+        return info;
+    });
+
+    // Walking *up*. Everything else in the engine searches downwards, so this is the one way to
+    // get from an object to something that contains it. With no selector it is the immediate
+    // parent; with one it climbs until an ancestor matches, which is what makes it useful in
+    // practice -- a view is rarely a direct child of the dock it lives in.
+    registerCommand(QStringLiteral("object.ancestor"), [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString className = QString::fromUtf8(object->metaObject()->className());
+        QVariantMap out;
+
+        if (!params.contains(QStringLiteral("selector"))) {
+            QObject *parent = object->parent();
+            if (!parent) {
+                throw CommandError(ErrorCode::NotFound,
+                                   QStringLiteral("%1 has no parent; it is a root object")
+                                       .arg(className));
+            }
+            out.insert(QStringLiteral("handle"), m_registry.handleFor(parent));
+            return out;
+        }
+
+        const Selector want = Selector::fromJson(
+            params.value(QStringLiteral("selector")).toMap());
+        SelectorEngine engine(m_registry);
+        QStringList climbed;
+        for (QObject *ancestor = object->parent(); ancestor; ancestor = ancestor->parent()) {
+            if (engine.matchesSelector(ancestor, want)) {
+                out.insert(QStringLiteral("handle"), m_registry.handleFor(ancestor));
+                return out;
+            }
+            climbed.append(QString::fromUtf8(ancestor->metaObject()->className()));
+        }
+        // The chain that was walked is the diagnosis: it shows how far up the search went and
+        // what was actually there, which is usually enough to spot the selector's mistake.
+        throw CommandError(ErrorCode::NotFound,
+                           QStringLiteral("no ancestor of %1 matches '%2'; walked up through %3")
+                               .arg(className, want.source,
+                                    climbed.isEmpty() ? QStringLiteral("nothing (no parent)")
+                                                      : climbed.join(QStringLiteral(" -> "))));
+    });
+
+    // A visible marker over an object, for working out interactively which one a selector
+    // actually found. Returns as soon as the overlay is up rather than waiting for it to
+    // expire, so a debugging aid never adds its own duration to a test's runtime.
+    registerCommand(QStringLiteral("object.highlight"), [this](const QVariantMap &params) -> QVariant {
+        const QString handle = params.value(QStringLiteral("handle")).toString();
+        QObject *object = m_registry.resolve(handle);
+
+        QWidget *top = nullptr;
+        QRect rect;
+        if (!WidgetBackend::highlightTarget(object, handle, &top, &rect)) {
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("cannot highlight %1: not a widget (Quick items "
+                                              "are not supported yet)")
+                                   .arg(QString::fromUtf8(object->metaObject()->className())));
+        }
+
+        const int duration = qMax(1, params.value(QStringLiteral("duration_ms"), 1000).toInt());
+        const int width = qMax(1, params.value(QStringLiteral("width"), 3).toInt());
+        const QString colour = params.value(QStringLiteral("color"),
+                                            QStringLiteral("#ff3b30")).toString();
+
+        auto *overlay = new QWidget(top);
+        // Invisible to the engine, so highlighting cannot change what a selector matches.
+        overlay->setProperty(LIBERAQT_INTERNAL_PROPERTY, true);
+        overlay->setObjectName(QStringLiteral("__liberaqt_highlight"));
+        // Transparent to the mouse and refusing focus: the overlay sits on top of the very thing
+        // the user is about to click, and must not intercept that click or move focus off it.
+        overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+        overlay->setFocusPolicy(Qt::NoFocus);
+        // WA_StyledBackground is not optional here: a plain QWidget's paintEvent draws nothing,
+        // so a stylesheet border on one is silently ignored and the marker never appears. This
+        // is the single easiest way to ship a highlight that passes its tests and shows nothing.
+        overlay->setAttribute(Qt::WA_StyledBackground, true);
+        overlay->setStyleSheet(QStringLiteral("background: transparent; border: %1px solid %2;")
+                                   .arg(width).arg(colour));
+        overlay->setGeometry(rect);
+        overlay->raise();
+        overlay->show();
+
+        // Guarded: the window may be destroyed before the timer fires.
+        QPointer<QWidget> guard(overlay);
+        QTimer::singleShot(duration, top, [guard] {
+            if (guard)
+                guard->deleteLater();
+        });
+
+        QVariantMap out;
+        out.insert(QStringLiteral("rect"),
+                   QVariantList{rect.x(), rect.y(), rect.width(), rect.height()});
+        return out;
+    });
+
+    registerCommand(QStringLiteral("object.tree"), [this](const QVariantMap &params) -> QVariant {
+        QObject *root = m_registry.resolveOrNull(params.value(QStringLiteral("root")).toString());
+        return WidgetBackend::dumpTree(root, m_registry,
+                                       params.value(QStringLiteral("depth"), -1).toInt(),
+                                       params.value(QStringLiteral("visual_only"), true).toBool());
+    });
+
+    // ---- properties ------------------------------------------------------
+    registerCommand(QStringLiteral("object.get_property"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString name = params.value(QStringLiteral("name")).toString();
+        QVariantMap out;
+        out.insert(QStringLiteral("value"),
+                   ValueCodec::encode(object->property(name.toUtf8().constData())));
+        return out;
+    });
+
+    registerCommand(QStringLiteral("object.set_property"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString name = params.value(QStringLiteral("name")).toString();
+        QVariant value = ValueCodec::decode(params.value(QStringLiteral("value")));
+
+        // Shape the value to the declared property type first, so JSON arrays can reach
+        // QSize/QPoint/QRect properties -- which is how geometry is written (QWidget exposes
+        // size and pos as properties whose setters are resize() and move()).
+        const QMetaObject *mo = object->metaObject();
+        const int index = mo->indexOfProperty(name.toUtf8().constData());
+        if (index >= 0)
+            value = ValueCodec::coerce(value, compat::propertyTypeId(mo->property(index)));
+
+        const bool ok = object->setProperty(name.toUtf8().constData(), value);
+        if (!ok)
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("no writable property '%1' on %2")
+                                   .arg(name, QString::fromUtf8(object->metaObject()->className())));
+        return QVariantMap{};
+    });
+
+    registerCommand(QStringLiteral("object.invoke"), [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString method = params.value(QStringLiteral("method")).toString();
+        if (method.isEmpty())
+            throw CommandError(ErrorCode::InvalidParams, QStringLiteral("'method' is required"));
+        const QVariantList args = params.value(QStringLiteral("args")).toList();
+        // "__" names are operations Qt does not expose as slots; see WidgetBackend::synthetic.
+        if (method.startsWith(QLatin1String("__")))
+            return WidgetBackend::synthetic(object, method, args);
+        return MetaInvoke::call(object, method, args,
+                                params.value(QStringLiteral("queued")).toBool());
+    });
+
+    // TODO(m1): object.list_properties, quick.*, widget.*, record.*
+    // Each new command needs: PROTOCOL.md entry, handler here, Python method, and a test.
+
+    // ---- synchronisation -------------------------------------------------
+    // Asynchronous: the wait is driven by the event loop rather than pumping it, so the reply
+    // still arrives if the application enters a nested loop (a modal dialog) while we wait.
+    registerAsyncCommand(QStringLiteral("sync.wait_idle"),
+                         [](const QVariantMap &params, Resolver resolve, Rejecter reject) {
+        const int quietMs = params.value(QStringLiteral("quiet_ms"), 50).toInt();
+        const bool animations = params.value(QStringLiteral("animations"), true).toBool();
+        const bool network = params.value(QStringLiteral("network"), false).toBool();
+        const int timeoutMs = params.value(QStringLiteral("timeout_ms"), 10000).toInt();
+
+        // Owned by the event loop: deletes itself once it has reported.
+        auto *tracker = new IdleTracker(QCoreApplication::instance());
+        tracker->waitForIdle(quietMs, animations, network, timeoutMs,
+                             [resolve, reject, timeoutMs](int waited) {
+            if (waited < 0) {
+                reject(CommandError(ErrorCode::Timeout,
+                                    QStringLiteral("UI did not become idle within %1 ms")
+                                        .arg(timeoutMs)));
+                return;
+            }
+            QVariantMap out;
+            out.insert(QStringLiteral("waited_ms"), waited);
+            resolve(out);
+        });
+    });
+
+    // ---- signals ---------------------------------------------------------
+    // Asynchronous by necessity: the point is to let the application run until it emits.
+    registerAsyncCommand(QStringLiteral("sync.wait_signal"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        const QString name = params.value(QStringLiteral("signal")).toString();
+        const int timeoutMs = params.value(QStringLiteral("timeout_ms"), 5000).toInt();
+
+        QString available;
+        const bool started = SignalWaiter::start(
+            object, name, timeoutMs,
+            [resolve, reject, name, timeoutMs](bool emitted) {
+                if (!emitted) {
+                    reject(CommandError(ErrorCode::Timeout,
+                                        QStringLiteral("'%1' was not emitted within %2 ms")
+                                            .arg(name).arg(timeoutMs)));
+                    return;
+                }
+                QVariantMap out;
+                out.insert(QStringLiteral("emitted"), true);
+                resolve(out);
+            },
+            &available);
+
+        if (!started) {
+            reject(CommandError(ErrorCode::Unsupported,
+                                QStringLiteral("%1 has no signal '%2'; it has: %3")
+                                    .arg(QString::fromUtf8(object->metaObject()->className()),
+                                         name, available)));
+        }
+    });
+
+    // ---- widgets / models ------------------------------------------------
+    registerCommand(QStringLiteral("widget.item_rect"), [this](const QVariantMap &params) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::itemRect(object, params, m_registry);
+    });
+
+    // Selecting is clicking, on the native path, so these three are input commands in all but
+    // name. A combo box or a menu needs several clicks with a popup appearing between them, so
+    // those run as staged walks (menu_walker) and resolve when the final click has been posted.
+    registerAsyncCommand(QStringLiteral("widget.select_item"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        if (auto *combo = qobject_cast<QComboBox *>(object)) {
+            const int entry = WidgetBackend::comboEntry(combo, params);
+            QVariantMap out;
+            out.insert(QStringLiteral("index"), entry);
+            out.insert(QStringLiteral("text"), combo->itemText(entry));
+            if (InputSynth::modeOf(params) == InputSynth::Mode::Synthetic) {
+                combo->setCurrentIndex(entry);
+                resolve(out);
+                return;
+            }
+            menu_walker::selectComboEntry(
+                combo, entry, [resolve, out](const QVariant &) { resolve(out); }, reject);
+            return;
+        }
+        const QVariant result = WidgetBackend::selectItem(object, params);
+        QTimer::singleShot(0, qApp, [resolve, result] {
+            QTimer::singleShot(0, qApp, [resolve, result] { resolve(result); });
+        });
+    });
+
+    registerInputCommand(QStringLiteral("widget.tab_select"), [this](const QVariantMap &params) {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::tabSelect(object, params);
+    });
+
+    // Right-click the target (a widget or an item-view cell), then walk `path` inside the menu
+    // that appears. Native-only by nature: a context menu is built inside contextMenuEvent, so
+    // there is no QAction to reach without genuinely opening it.
+    registerAsyncCommand(QStringLiteral("widget.context_menu"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
+        const QString handle = params.value(QStringLiteral("handle")).toString();
+        auto *widget = qobject_cast<QWidget *>(m_registry.resolve(handle));
+        if (!widget) {
+            throw CommandError(ErrorCode::Unsupported,
+                               QStringLiteral("context menus need a widget target"));
+        }
+        const QStringList path = params.value(QStringLiteral("path")).toString()
+                                     .split(QLatin1Char('>'), Qt::SkipEmptyParts);
+        if (path.isEmpty())
+            throw CommandError(ErrorCode::InvalidParams, QStringLiteral("'path' is required"));
+        QPoint point;
+        if (!WidgetBackend::interactionPointFor(widget, handle, &point)) {
+            throw CommandError(ErrorCode::NotActionable,
+                               QStringLiteral("cannot compute a point to right-click"));
+        }
+        menu_walker::walkContextMenu(widget, point, path, resolve, reject);
+    });
+
+    registerAsyncCommand(QStringLiteral("widget.menu_trigger"),
+                         [this](const QVariantMap &params, Resolver resolve, Rejecter reject) {
+        QObject *window = m_registry.resolve(params.value(QStringLiteral("window")).toString());
+
+        // The native walk resolves each level only after clicking its menu open, so entries a
+        // menu creates in aboutToShow are addressable -- but only there. The probe and the
+        // synthetic queued trigger resolve the whole path up front instead, because they open
+        // nothing, and therefore can only see entries that exist while the menus are closed.
+        if (!params.value(QStringLiteral("probe")).toBool()
+            && InputSynth::modeOf(params) == InputSynth::Mode::Native) {
+            const QStringList path = params.value(QStringLiteral("path")).toString()
+                                         .split(QLatin1Char('>'), Qt::SkipEmptyParts);
+            if (path.isEmpty()) {
+                throw CommandError(ErrorCode::InvalidParams,
+                                   QStringLiteral("'path' is required"));
+            }
+            menu_walker::walkMenu(WidgetBackend::menuBarOf(window), path, resolve, reject);
+            return;
+        }
+
+        QMenuBar *bar = nullptr;
+        const QList<QAction *> chain = WidgetBackend::menuPath(window, params, &bar);
+
+        QVariantMap out;
+        QAction *leaf = chain.last();
+        out.insert(QStringLiteral("enabled"), leaf->isEnabled());
+        out.insert(QStringLiteral("checked"), leaf->isChecked());
+        QString label = leaf->text();
+        out.insert(QStringLiteral("text"), label.remove(QLatin1Char('&')));
+        if (params.value(QStringLiteral("probe")).toBool()) {
+            resolve(out);
+            return;
+        }
+        for (QAction *action : chain) {
+            if (!action->isEnabled()) {
+                QString name = action->text();
+                throw CommandError(ErrorCode::NotActionable,
+                                   QStringLiteral("the menu entry '%1' is disabled")
+                                       .arg(name.remove(QLatin1Char('&'))));
+            }
+        }
+        // Queued for the same reason object.invoke offers it: a menu entry very often opens a
+        // modal dialog, and a direct trigger would not return until it was dismissed.
+        QMetaObject::invokeMethod(leaf, "trigger", Qt::QueuedConnection);
+        out.insert(QStringLiteral("queued"), true);
+        resolve(out);
+    });
+
+    registerCommand(QStringLiteral("widget.model_data"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::modelData(object,
+                                        params.value(QStringLiteral("max_rows"), -1).toInt());
+    });
+
+    // ---- input -----------------------------------------------------------
+    registerInputCommand(QStringLiteral("input.click"), [this](const QVariantMap &params) {
+        return InputSynth::click(m_registry, params);
+    });
+    registerInputCommand(QStringLiteral("input.hover"), [this](const QVariantMap &params) {
+        return InputSynth::hover(m_registry, params);
+    });
+    registerInputCommand(QStringLiteral("input.key"), [this](const QVariantMap &params) {
+        return InputSynth::key(m_registry, params);
+    });
+    registerInputCommand(QStringLiteral("input.type_text"), [this](const QVariantMap &params) {
+        return InputSynth::typeText(m_registry, params);
+    });
+    registerInputCommand(QStringLiteral("input.press"), [this](const QVariantMap &params) {
+        return InputSynth::press(m_registry, params);
+    });
+    registerInputCommand(QStringLiteral("input.release"), [this](const QVariantMap &params) {
+        return InputSynth::release(m_registry, params);
+    });
+    registerInputCommand(QStringLiteral("input.wheel"), [this](const QVariantMap &params) {
+        return InputSynth::wheel(m_registry, params);
+    });
+    registerInputCommand(QStringLiteral("input.drag"), [this](const QVariantMap &params) {
+        return InputSynth::drag(m_registry, params);
+    });
+
+    // Not input, despite the name: it writes a property. Nothing is queued, so it stays
+    // synchronous -- see the note on InputSynth::setText.
+    registerCommand(QStringLiteral("input.set_text"), [this](const QVariantMap &params) -> QVariant {
+        return InputSynth::setText(m_registry, params);
+    });
+
+    // ---- properties ------------------------------------------------------
+
+    // The escape hatch for a method moc cannot see. Sharp on purpose: see MetaInvoke::callNative
+    // for what keeps it from being reckless, and for what it still cannot protect you from.
+    registerCommand(QStringLiteral("object.call_native"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return MetaInvoke::callNative(object,
+                                      params.value(QStringLiteral("module")).toString(),
+                                      params.value(QStringLiteral("symbol")).toString(),
+                                      params.value(QStringLiteral("signature")).toString(),
+                                      params.value(QStringLiteral("args")).toList());
+    });
+
+    registerCommand(QStringLiteral("object.accessible"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        return WidgetBackend::accessibleTree(
+            object, params.value(QStringLiteral("depth"), -1).toInt());
+    });
+
+    registerCommand(QStringLiteral("object.list_methods"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        QVariantMap out;
+        out.insert(QStringLiteral("methods"), MetaInvoke::listMethods(object));
+        return out;
+    });
+
+    registerCommand(QStringLiteral("object.list_properties"),
+                    [this](const QVariantMap &params) -> QVariant {
+        QObject *object = m_registry.resolve(params.value(QStringLiteral("handle")).toString());
+        QVariantMap out;
+        out.insert(QStringLiteral("properties"), WidgetBackend::listProperties(object));
+        return out;
+    });
+
+    // Deliberately never an error: "does this exist?" has a false answer, not a failure.
+    registerCommand(QStringLiteral("object.exists"), [this](const QVariantMap &params) -> QVariant {
+        const QString handle = params.value(QStringLiteral("handle")).toString();
+        QVariantMap out;
+        out.insert(QStringLiteral("exists"), m_registry.resolveOrNull(handle) != nullptr);
+        return out;
+    });
+
+    registerCommand(QStringLiteral("session.set_options"),
+                    [](const QVariantMap &params) -> QVariant {
+        // Unknown keys are ignored rather than rejected, so a newer client can talk to an older
+        // agent without failing outright. "accepted" therefore reports what was actually applied,
+        // not what was sent -- that difference is how a client can tell the two apart.
+        QStringList accepted;
+        const QString inputMode = params.value(QStringLiteral("input_mode")).toString();
+        if (!inputMode.isEmpty()) {
+            InputSynth::Mode mode = InputSynth::Mode::Native;
+            if (!InputSynth::parseMode(inputMode, &mode)) {
+                throw CommandError(ErrorCode::InvalidParams,
+                                   QStringLiteral("unknown input_mode '%1'; expected 'native' or "
+                                                  "'synthetic'").arg(inputMode));
+            }
+            InputSynth::setMode(mode);
+            accepted << QStringLiteral("input_mode");
+        }
+        QVariantMap out;
+        out.insert(QStringLiteral("accepted"), accepted);
+        return out;
+    });
+
+    registerCommand(QStringLiteral("screen.grab"), [this](const QVariantMap &params) -> QVariant {
+        return Screenshot::grab(m_registry, params);
+    });
+}
+
+} // namespace liberaqt

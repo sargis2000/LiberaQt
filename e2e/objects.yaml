@@ -1,0 +1,44 @@
+# Every selector the Libero SoC end-to-end flow uses, so a Libero UI change is a one-line fix
+# here rather than a hunt through the test.
+#
+# Reached from the test as `win.obj("wizard.next")` -- nested keys are flattened with dots.
+# Selectors are resolved against the window they are asked of, so the same short name works for
+# whichever dialog is in front.
+
+# The update prompt Libero puts up before the main window exists.
+startup:
+  dismiss: "QPushButton[text='No']"
+
+# Project > New Project.
+wizard:
+  project_name: "QLineEdit#projectNamelineEdit"
+  project_location: "QLineEdit#projLocationLineEdit"
+  # Empty until the device page is entered: Qt builds every wizard page up front, but Libero
+  # only populates the one it is showing.
+  die_combo: "QComboBox#dieComboBox"
+  part_list: "QTreeView#partView"
+  next: "QPushButton[text='Next >']"
+  finish: "QPushButton[text='Finish']"
+
+# File > New > SmartDesign.
+smartdesign:
+  menu_action: "QAction[text='SmartDesign']"
+  component_name: "QLineEdit#componentName"
+  ok: "QPushButton[text='OK']"
+
+# File > Import > HDL Source Files. Not the native Windows picker but `Eveetl::EnhancedFileDlg`,
+# Libero's own Qt dialog, so it is drivable like any other widget.
+import_files:
+  file_name: "QLineEdit#fileNameEdit"
+  open: "QPushButton[text='Open']"
+
+main:
+  # Scoped to the dock on purpose. Libero has two of these buttons -- the Design Hierarchy dock
+  # and the Stimulus Hierarchy one -- and they are indistinguishable on their own: same class,
+  # same text, same objectName (`updateHierPB`), differing only by nine pixels of y. Selecting
+  # on the dock says which one is meant, instead of depending on tree order.
+  build_hierarchy: "QDockWidget[objectName='Design Hierarchy'] QPushButton[text*='Build Hierarchy']"
+  dock_tabs: "QTabBar"
+  # Libero's own classes. Namespaced, which is why the selector lexer has to accept `::`.
+  hierarchy: "Hierview::DHierView"
+  flow: "Flowview::View"

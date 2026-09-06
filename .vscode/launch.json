@@ -1,0 +1,42 @@
+{
+  // Debug configurations for LiberaQT.
+  //
+  // PYDEVD_UNBLOCK_THREADS_TIMEOUT is the one that matters. The client talks to the agent over a
+  // socket read by a background thread ("liberaqt-reader"), and pydevd suspends *every* Python
+  // thread at a breakpoint -- including that one. So a call from the debug console sends its
+  // request, the agent answers immediately, and nothing is awake to read the reply: every command
+  // fails with "no response to <cmd> within Ns", and the hint blames a blocked GUI thread in the
+  // application, which is not what happened. Setting this makes pydevd resume other threads when
+  // an evaluation takes longer than the given number of seconds, so the reader delivers the reply.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // "purpose": ["debug-test"] is what makes the Test Explorer's Debug Test use this config;
+      // without it the Python extension supplies its own and this file is ignored entirely.
+      "name": "Debug tests (liberaqt)",
+      "type": "debugpy",
+      "request": "launch",
+      "purpose": ["debug-test"],
+      "console": "integratedTerminal",
+      // The client lives in src/liberaqt; stepping into it is usually the point.
+      "justMyCode": false,
+      "env": {
+        "PYDEVD_UNBLOCK_THREADS_TIMEOUT": "2"
+      }
+    },
+    {
+      // Run the Libero end-to-end flow directly, without going through the Test Explorer.
+      // -s keeps print() visible, which is the fallback when the console cannot be used.
+      "name": "Libero e2e (synthesis)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["e2e/test_libero_synthesis.py::test_libero_synthesises_a_project", "-v", "-s"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYDEVD_UNBLOCK_THREADS_TIMEOUT": "2"
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.idea/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+*.so
+*.dll
+*.dylib
+liberaqt-trace/
+
+# MkDocs build output
+site/

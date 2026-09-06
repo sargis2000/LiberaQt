@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  client:
+    name: Python client (no Qt needed)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest tests/ -q
+
+  # Builds the agent on every supported ABI. This is a compile check only: nothing here runs the
+  # agent, because the tests that drove real Qt applications have been removed. A green matrix
+  # therefore says the C++ still builds against Qt 5.15 and 6.7 -- not that it works.
+  agent:
+    name: Agent build (Qt ${{ matrix.qt }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04,  qt: "6.7.2",  tag: "qt6.7-linux-x86_64-gcc" }
+          - { os: ubuntu-22.04,  qt: "5.15.2", tag: "qt5.15-linux-x86_64-gcc" }
+          - { os: windows-2022,  qt: "6.7.2",  tag: "qt6.7-windows-x86_64-msvc2022" }
+          - { os: windows-2022,  qt: "5.15.2", tag: "qt5.15-windows-x86_64-msvc2019" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ matrix.qt }}
+          modules: ${{ startsWith(matrix.qt, '6') && 'qtdeclarative' || '' }}
+
+      - name: Build agent
+        run: |
+          cmake -S agent -B build/agent -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/agent --config Release --parallel
+          cmake --install build/agent --prefix ${{ github.workspace }}/agents/${{ matrix.tag }}
+
+      - name: Upload agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.tag }}
+          path: agents/${{ matrix.tag }}

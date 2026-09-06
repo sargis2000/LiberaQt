@@ -1,0 +1,63 @@
+LiberaQT
+Copyright 2026 Sargis Khachatryan
+
+This product includes software developed by Sargis Khachatryan and the LiberaQT
+contributors.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full terms, or https://www.apache.org/licenses/LICENSE-2.0.
+
+
+--------------------------------------------------------------------------------
+Trademarks
+--------------------------------------------------------------------------------
+
+This project is not affiliated with or endorsed by The Qt Company. "Qt" is a
+trademark of The Qt Company Ltd. The name "LiberaQT" is used descriptively to
+indicate compatibility.
+
+
+--------------------------------------------------------------------------------
+Third-party software
+--------------------------------------------------------------------------------
+
+Qt (https://www.qt.io/)
+    The LiberaQT agent under agent/ is a Qt plugin. It is compiled against, and
+    dynamically links to, the Qt libraries of whichever Qt installation it is
+    built for -- typically Qt Core, Gui, Widgets and Network, plus Qt Quick and
+    Qml where those are available. Qt is not distributed as part of this source
+    repository.
+
+    Qt is available under commercial terms from The Qt Company and under open
+    source terms, the relevant one here being the GNU Lesser General Public
+    License version 3 (LGPLv3). Which terms apply to a given agent binary is
+    decided by the Qt installation it was built against, not by this project.
+
+    If you distribute a compiled LiberaQT agent that links an LGPL-licensed Qt,
+    the LGPL places obligations on you as the distributor. In outline: say that
+    Qt is used and under which licence, supply a copy of the LGPL, and let the
+    recipient relink the work against a modified Qt. LiberaQT agents link Qt
+    dynamically and load as ordinary Qt plugins, which is what makes that last
+    point satisfiable, but the obligation is yours and this note is not legal
+    advice.
+
+    The agent also uses Qt private API -- QWindowSystemInterface, reached via
+    the GuiPrivate module -- to deliver input the way a platform plugin does.
+    That is a source and binary compatibility commitment Qt does not make, and
+    it is why an agent must match the application's Qt minor version exactly. It
+    carries no separate licence consequence.
+
+
+--------------------------------------------------------------------------------
+A note on what this software does
+--------------------------------------------------------------------------------
+
+The LiberaQT agent is loaded into another application's process and exposes its
+object tree over a loopback socket. It is inert unless LIBERAQT_TOKEN is set,
+listens only on 127.0.0.1, requires that token, and accepts one client. It is
+nonetheless a remote code execution surface by design and must never be shipped
+in a production build.
+
+Automating an application you do not own may be governed by that application's
+own licence or terms of use. That is between you and its vendor; nothing in the
+Apache License grants rights over third-party software.
