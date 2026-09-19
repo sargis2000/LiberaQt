@@ -231,14 +231,17 @@ class Application:
         timeout = self._session.timeouts.resolve(timeout)
 
         def once() -> Window:
-            entries = self._session.call(Cmd.WINDOW_LIST) or []
-            if title is not None:
-                entries = [e for e in entries if e.get("title") == title]
+            every = self._session.call(Cmd.WINDOW_LIST) or []
+            entries = ([e for e in every if e.get("title") == title]
+                       if title is not None else every)
             if not entries:
+                # In the message, not just in `data`: nothing renders `data`, so collecting the
+                # titles and leaving them there cost a second WINDOW_LIST and told nobody.
+                available = [e.get("title", "") for e in every]
+                listed = ", ".join(repr(t) for t in available) if available else "none"
                 raise LiberaQtError(
-                    f"no window matching title={title!r}",
-                    data={"available": [e.get("title") for e in
-                                        (self._session.call(Cmd.WINDOW_LIST) or [])]},
+                    f"no window matching title={title!r}; there is: {listed}",
+                    data={"available": available},
                 )
             return Window(self._session, entries[index]["handle"], entries[index])
 

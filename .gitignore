@@ -23,3 +23,6 @@ liberaqt-trace/
 
 # MkDocs build output
 site/
+
+# Claude Code per-developer overrides; .claude/settings.json is the shared one.
+.claude/settings.local.json

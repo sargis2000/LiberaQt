@@ -52,6 +52,13 @@ Issues = "https://github.com/sargis2000/LiberaQt/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/liberaqt"]
 
+# The documentation sources travel inside the wheel, so `liberaqt docs` works from a plain
+# `pip install` and not only from a checkout. mkdocs resolves `docs_dir:` relative to the config
+# file, so the packaged layout needs no rewriting of mkdocs.yml.
+[tool.hatch.build.targets.wheel.force-include]
+"docs" = "liberaqt/_docs/docs"
+"mkdocs.yml" = "liberaqt/_docs/mkdocs.yml"
+
 [tool.ruff]
 line-length = 100
 target-version = "py39"
@@ -71,7 +78,17 @@ convention = "google"
 "tests/**" = ["D100", "D101", "D102", "D103", "D104"]
 # The live-application suite is tests too, and additionally needs a bare `except` in its
 # cleanup helpers: a teardown that raises would mask the real failure it is unwinding.
-"e2e/**" = ["D100", "D101", "D102", "D103", "D104", "BLE001"]
+"tests/e2e/**" = ["D100", "D101", "D102", "D103", "D104", "BLE001"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Only the no-Qt suite. The live tests under tests/e2e drive real applications -- Qt Assistant,
+# and Libero SoC, which writes projects to disk -- so they are opted into by path and never by
+# accident. tests/conftest.py enforces the same rule for `pytest tests`.
+testpaths = ["tests/unit"]
+markers = [
+  "live: drives a real application; needs it installed and a matching agent",
+  "qt_app: drives one of Qt's own shipped tools",
+  "libero: drives Microchip Libero SoC (Qt 5.15 / MSVC / x86)",
+  "writes_disk: creates files outside pytest's tmp directories",
+  "slow: takes minutes rather than seconds",
+]

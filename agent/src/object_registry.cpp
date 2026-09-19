@@ -43,6 +43,17 @@ QObject *ObjectRegistry::resolveOrNull(const QString &handle) const
     return it == m_byHandle.constEnd() ? nullptr : it->data();
 }
 
+QObject *ObjectRegistry::resolveRoot(const QString &handle) const
+{
+    // A search root is the one place where "no handle" and "a handle that died" must not be
+    // conflated. Both come back as nullptr from resolveOrNull, and nullptr means "search the
+    // whole application" -- so a stale root silently widened the search to every window instead
+    // of failing, and could resolve, and very nearly act on, an object in a different window.
+    if (handle.isEmpty())
+        return nullptr;
+    return resolve(handle);
+}
+
 QObject *ObjectRegistry::resolve(const QString &handle) const
 {
     QObject *object = resolveOrNull(handle);

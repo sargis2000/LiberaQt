@@ -17,7 +17,7 @@ a toy application agrees with whatever the driver happens to do.
     ```
 
 !!! success "Everything on this page is executed as a test"
-    The code below lives in `e2e/test_docs_examples.py` and runs against a real Qt Assistant.
+    The code below lives in `tests/e2e/qt/test_docs_examples.py` and runs against a real Qt Assistant.
     Writing that file caught six mistakes in an earlier draft of this page — including two
     selectors that never existed.
 

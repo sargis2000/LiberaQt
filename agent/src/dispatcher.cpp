@@ -197,7 +197,7 @@ void Dispatcher::registerBuiltins()
     registerCommand(QStringLiteral("object.find"), [this](const QVariantMap &params) -> QVariant {
         const Selector selector = Selector::fromJson(
             params.value(QStringLiteral("selector")).toMap());
-        QObject *root = m_registry.resolveOrNull(
+        QObject *root = m_registry.resolveRoot(
             params.value(QStringLiteral("root")).toString());
 
         SelectorEngine engine(m_registry);
@@ -327,7 +327,7 @@ void Dispatcher::registerBuiltins()
     });
 
     registerCommand(QStringLiteral("object.tree"), [this](const QVariantMap &params) -> QVariant {
-        QObject *root = m_registry.resolveOrNull(params.value(QStringLiteral("root")).toString());
+        QObject *root = m_registry.resolveRoot(params.value(QStringLiteral("root")).toString());
         return WidgetBackend::dumpTree(root, m_registry,
                                        params.value(QStringLiteral("depth"), -1).toInt(),
                                        params.value(QStringLiteral("visual_only"), true).toBool());

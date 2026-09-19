@@ -140,6 +140,8 @@ liberaqt inspect ./app       suggest a selector for every object, and say which 
 liberaqt inspect ./app -i    same, then drop into a REPL with `app` and `win` bound
 liberaqt inspect ./app --validate objects.yaml   check an object map still resolves
 liberaqt record ./app -o test_x.py
+liberaqt docs                serve the documentation locally (ships inside the wheel)
+liberaqt docs build          build it into ./site
 liberaqt run tests/
 ```
 
@@ -170,16 +172,28 @@ cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR -DCMAKE_BUILD_TYPE=Rele
 cmake --build build/agent --parallel
 cmake --install build/agent --prefix ~/.cache/liberaqt/agents/qt6.7-linux-x86_64-gcc
 
-pytest tests/          # unit tests of the client, no Qt needed
+pytest tests/unit      # unit tests of the client, no Qt needed
 ```
 
 ## Testing
 
-`pytest tests/` is the whole suite: unit tests of the pure-Python client, with no Qt and no agent
-involved. Nothing in the repository runs the agent, so a green suite says the client's parsing,
-selectors and error handling are sound -- it says nothing about whether the agent works.
+Tests live in one tree, split by what has to be installed to run them:
 
-There is no sample application here either, and deliberately so: a purpose-built sample agrees
+```bash
+pytest tests/unit          # 324 tests. Pure Python -- no Qt, no agent. This is what CI runs.
+pytest tests/e2e/qt        # drives Qt's own shipped tools; needs a Qt installation
+pytest tests/e2e/libero    # drives Microchip Libero SoC; needs Libero and a 32-bit agent
+```
+
+The live suites are opted into **by path** -- `pytest` and `pytest tests/` run the unit tests and
+report the rest as deselected -- because they launch real applications and some of them write
+projects to disk. Within them, markers cut the other way: `-m "libero and not writes_disk"`,
+`-m "live and not slow"`.
+
+A green `tests/unit` says the client's parsing, selectors and error handling are sound. It says
+nothing about whether the agent works: that is what `tests/e2e` is for, and it is not run by CI.
+
+There is no sample application here, and deliberately so: a purpose-built sample agrees
 with whatever the driver happens to do, while a real application does not. Verify agent changes by
 driving a real Qt program yourself, which needs nothing but a matching agent installed:
 

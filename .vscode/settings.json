@@ -1,6 +1,7 @@
 {
     "python.testing.pytestArgs": [
-        "e2e"
+        "tests/unit",
+        "tests/e2e"
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,

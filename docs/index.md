@@ -23,7 +23,7 @@ No sleeps, no coordinates, no screen scraping. Every action waits for the object
 visible, become enabled, and stop moving before it touches it.
 
 !!! tip "Every example on this site is executed"
-    `e2e/test_docs_examples.py` runs them against a real Qt Assistant, so a selector that stops
+    `tests/e2e/qt/test_docs_examples.py` runs them against a real Qt Assistant, so a selector that stops
     existing fails a test rather than wasting your afternoon.
 
 ## How it is different from a screen-level tool

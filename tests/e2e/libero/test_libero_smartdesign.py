@@ -32,6 +32,9 @@ import pytest
 
 from liberaqt import LiberaQt, LiberaQtError
 
+#: This suite writes a Libero project to a fixed path outside any tmp dir.
+pytestmark = pytest.mark.writes_disk
+
 LIBERO_GLOB = "C:/Microchip/Libero_SoC_*/Libero_SoC/Designer/bin/libero.exe"
 PROJECT_DIR = Path(r"C:\Users\Public\lqt_sd_test")
 PROJECT_NAME = f"sdt_{os.getpid()}"

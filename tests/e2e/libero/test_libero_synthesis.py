@@ -41,6 +41,9 @@ import pytest
 
 from liberaqt import LiberaQt, LiberaQtError
 
+#: This suite writes a Libero project to a fixed path outside any tmp dir.
+pytestmark = [pytest.mark.writes_disk, pytest.mark.slow]
+
 LIBERO = r"C:\Microchip\Libero_SoC_2026.1\Libero_SoC\Designer\bin\libero.exe"
 
 #: Short on purpose: Libero warns about long paths with a modal dialog that blocks everything

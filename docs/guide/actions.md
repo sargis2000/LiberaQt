@@ -19,7 +19,7 @@ loc.drag_to(other)
 
 ```python
 loc.type("hello")                   # types character by character
-loc.fill("hello")                   # clears, then types
+loc.fill("hello")                   # writes the property; does NOT type (see below)
 loc.press("Return")
 loc.press("Ctrl+A")
 ```
@@ -88,8 +88,8 @@ pass.
 ## Reading state
 
 ```python
-loc.text
-loc.value
+loc.text                            # a label, a button, a QLineEdit
+loc.value                           # a slider or spin box -- None for a text field
 loc.is_visible
 loc.is_enabled
 loc.is_checked

@@ -709,8 +709,13 @@ class Locator:
         """The object's ``objectName``, empty when the application never set one."""
         return self._info().get("objectName", "")
 
+    @property
     def exists(self) -> bool:
         """Whether anything currently matches. Does not wait.
+
+        A property, like every other state reader on this class. It was briefly a method, which
+        is the worst possible shape for it: ``if loc.exists:`` tested a bound object and was
+        therefore always true, so ``assert not loc.exists`` could never fail.
 
         Returns:
             True when at least one object matches.

@@ -2,15 +2,15 @@
 
 Every interactive method the client offers, in one table.
 
-> Enforced again, in part, by `e2e/test_actions_live.py` and `e2e/test_selectors_live.py`, which
+> Enforced again, in part, by `tests/e2e/qt/test_actions_live.py` and `tests/e2e/qt/test_selectors_live.py`, which
 > drive a live Qt Assistant: text input, chords, window shortcuts, checkboxes, item views and the
 > wheel are asserted there, as is every selector rule. Run them with
-> `pytest e2e/test_actions_live.py e2e/test_selectors_live.py`; they skip when Qt is absent.
+> `pytest tests/e2e/qt/test_actions_live.py tests/e2e/qt/test_selectors_live.py`; they skip when Qt is absent.
 >
 > Rows not covered by that suite -- `select_option`, `spin`, `drag_to`, `menu`, `context_menu`,
 > `hover` -- remain **documentation, not enforcement**, recording what was measured on Qt 6.7
 > (Assistant, Designer, qmleasing) and Qt 5.15 (Libero SoC). The end-to-end Libero flow in
-> `e2e/test_libero_synthesis.py` does exercise `menu`, `context_menu` and `select_item` against a
+> `tests/e2e/libero/test_libero_synthesis.py` does exercise `menu`, `context_menu` and `select_item` against a
 > real application, though only along the one path it walks.
 
 The two modes, in one sentence each:

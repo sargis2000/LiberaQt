@@ -28,12 +28,6 @@ from liberaqt import LiberaQt
 EXE = ".exe" if sys.platform == "win32" else ""
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """Add the application location option."""
-    parser.addoption("--liberaqt-qt-bin", default=None,
-                     help="directory holding assistant/designer/linguist")
-
-
 def _candidates(configured: str | None) -> list[Path]:
     """Where to look for Qt's applications, best first.
 
@@ -76,7 +70,7 @@ def qt_tool(pytestconfig: pytest.Config):
     ``--liberaqt-qt-bin`` (or ``LIBERAQT_QT_BIN``, or ``QTDIR``) picks the installation, which is
     how you point the suite at a particular Qt version::
 
-        pytest e2e/ --liberaqt-qt-bin "C:/Qt/6.5.9/mingw_64/bin"
+        pytest tests/e2e --liberaqt-qt-bin "C:/Qt/6.5.9/mingw_64/bin"
 
     Returns:
         A callable taking an application name -- ``"assistant"``, ``"qmleasing"`` -- and

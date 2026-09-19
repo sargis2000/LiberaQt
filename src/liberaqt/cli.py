@@ -266,8 +266,29 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+#: The source checkout this module was loaded from, if it was loaded from one.
+#:
+#: ``src/liberaqt/cli.py`` -> the repository root. From a wheel this lands somewhere harmless
+#: (the parent of site-packages), which simply never holds an mkdocs.yml.
+#:
+#: Named rather than inlined so a test can monkeypatch it. Inlined, a test of the search order
+#: passes under a wheel install and fails under an editable one, because there ``parents[2]``
+#: really is a checkout with a real mkdocs.yml.
+CHECKOUT_DOCS = Path(__file__).resolve().parents[2]
+
+#: The copy of the documentation sources that travels inside the wheel.
+#:
+#: ``force-include`` in pyproject.toml puts ``docs/`` and ``mkdocs.yml`` here, so an install that
+#: never saw the repository can still serve and build the real documentation.
+PACKAGED_DOCS = Path(__file__).resolve().parent / "_docs"
+
+
 def docs_root(explicit: str | None = None) -> Path:
     """Locate the documentation source: the directory holding ``mkdocs.yml``.
+
+    Searched in order: a directory given on the command line, the working directory, the source
+    checkout this module lives in, and the copy packaged into the wheel. A checkout is preferred
+    over the packaged copy, so editing ``docs/`` and serving them stays one step.
 
     Args:
         explicit: A directory given on the command line, which wins.
@@ -276,8 +297,8 @@ def docs_root(explicit: str | None = None) -> Path:
         The directory containing ``mkdocs.yml``.
 
     Raises:
-        LiberaQtError: It could not be found, which is normal for a wheel install -- the
-            documentation sources are not packaged.
+        LiberaQtError: It could not be found anywhere, which means this is neither a checkout
+            nor a complete install.
     """
     if explicit:
         candidate = Path(explicit)
@@ -285,28 +306,89 @@ def docs_root(explicit: str | None = None) -> Path:
             return candidate
         raise LiberaQtError(f"{candidate} has no mkdocs.yml")
 
-    for base in (Path.cwd(), Path(__file__).resolve().parents[2]):
+    for base in (Path.cwd(), CHECKOUT_DOCS, PACKAGED_DOCS):
         if (base / "mkdocs.yml").is_file():
             return base
     raise LiberaQtError(
         "could not find mkdocs.yml",
-        hint="Run from a source checkout, or pass --source <dir>. A wheel does not ship the "
-             "documentation sources.",
+        hint=f"Pass --source <dir>, or run from a source checkout. A wheel carries its own copy "
+             f"at {PACKAGED_DOCS}; this install has none, so it is incomplete.",
     )
 
 
-def docs_command(root: Path, host: str, port: int, build: bool = False) -> tuple[list[str], str]:
+#: Files mkdocs leaves in every site it builds. Their presence means the directory is a build
+#: output rather than something of the user's that happens to be called ``site``.
+_MKDOCS_BUILD_MARKERS = ("404.html", "sitemap.xml")
+
+
+def check_site_dir_is_disposable(site_dir: Path, explicit: bool) -> None:
+    """Refuse to hand mkdocs a directory it would erase and the user would miss.
+
+    ``mkdocs build`` cleans its destination unconditionally. For a packaged install the default
+    destination is ``./site`` in whatever directory the caller happens to be standing in, which
+    is theirs and not ours -- so a ``site/`` holding anything other than a previous build is
+    treated as a refusal, not a target.
+
+    Naming ``--site-dir`` is consent, and skips the check.
+
+    Args:
+        site_dir: Where the build would be written.
+        explicit: Whether the caller named it with ``--site-dir``.
+
+    Raises:
+        LiberaQtError: The directory holds something that is not a previous mkdocs build.
+    """
+    if explicit or not site_dir.is_dir():
+        return
+    contents = list(site_dir.iterdir())
+    if not contents:
+        return
+    if any((site_dir / marker).is_file() for marker in _MKDOCS_BUILD_MARKERS):
+        return
+    raise LiberaQtError(
+        f"{site_dir} is not empty and does not look like a previous documentation build",
+        hint="mkdocs erases its destination. Move that directory aside, or choose another with "
+             "--site-dir <dir>.",
+    )
+
+
+def _docs_extra_hint(root: Path) -> str:
+    """How to install the ``docs`` extra, phrased for how this install actually happened.
+
+    There is no PyPI release, so ``pip install "liberaqt[docs]"`` resolves to nothing. A checkout
+    installs from itself; anything else has to name the repository.
+
+    Args:
+        root: The documentation root in play.
+
+    Returns:
+        A command the reader can paste.
+    """
+    if root == PACKAGED_DOCS:
+        return ('pip install "liberaqt[docs] @ '
+                'git+https://github.com/sargis2000/LiberaQt.git"')
+    return 'pip install -e ".[docs]"'
+
+
+def docs_command(root: Path, host: str, port: int, build: bool = False,
+                 site_dir: Path | None = None) -> tuple[list[str], str]:
     """Work out how to serve or build the documentation, and say which way it went.
 
     Prefers mkdocs, which rebuilds a page as you edit it. Falls back to serving an already-built
     ``site/`` over :mod:`http.server`, so the command still does something useful on a machine
     without the ``docs`` extra installed.
 
+    ``site_dir`` exists because ``root`` is not necessarily the caller's to write to: ``site_dir:``
+    in mkdocs.yml is resolved against the config file, so a packaged install would otherwise build
+    into site-packages. It has to be **absolute**, because mkdocs resolves a relative
+    ``--site-dir`` against the config file as well, not against the working directory.
+
     Args:
         root: Directory holding ``mkdocs.yml``.
         host: Address to bind.
         port: Port to bind.
-        build: Build into ``site/`` and exit, rather than serving.
+        build: Build and exit, rather than serving.
+        site_dir: Absolute directory to build into. ``None`` leaves mkdocs to its own default.
 
     Returns:
         ``(argv, description)``.
@@ -316,24 +398,31 @@ def docs_command(root: Path, host: str, port: int, build: bool = False) -> tuple
     """
     if importlib.util.find_spec("mkdocs") is not None:
         if build:
-            return ([sys.executable, "-m", "mkdocs", "build", "--strict"], "mkdocs build")
+            argv = [sys.executable, "-m", "mkdocs", "build", "--strict"]
+            if site_dir is not None:
+                argv += ["--site-dir", str(site_dir)]
+            return (argv, "mkdocs build")
         return ([sys.executable, "-m", "mkdocs", "serve", "-a", f"{host}:{port}"], "mkdocs serve")
 
     if build:
         raise LiberaQtError(
             "building the documentation needs mkdocs",
-            hint='pip install -e ".[docs]"',
+            hint=_docs_extra_hint(root),
         )
 
-    site = root / "site"
-    if (site / "index.html").is_file():
-        return ([sys.executable, "-m", "http.server", str(port),
-                 "--bind", host, "--directory", str(site)],
-                "http.server on the last built site (no live reload)")
+    # The site `build` was told to write comes first: from a wheel, `root / "site"` is inside
+    # site-packages and can never exist.
+    candidates = [site_dir] if site_dir is not None else []
+    candidates.append(root / "site")
+    for site in candidates:
+        if (site / "index.html").is_file():
+            return ([sys.executable, "-m", "http.server", str(port),
+                     "--bind", host, "--directory", str(site)],
+                    "http.server on the last built site (no live reload)")
 
     raise LiberaQtError(
         "mkdocs is not installed and there is no built site to serve",
-        hint='pip install -e ".[docs]"  --  then `liberaqt docs` rebuilds as you edit',
+        hint=f"{_docs_extra_hint(root)}  --  then `liberaqt docs` rebuilds as you edit",
     )
 
 
@@ -370,7 +459,7 @@ def docs_url(root: Path, host: str, port: int, with_prefix: bool = True) -> str:
 
 
 def cmd_docs(args: argparse.Namespace) -> int:
-    """Serve the documentation for local viewing.
+    """Serve the documentation for local viewing, or build it into a directory.
 
     Args:
         args: Parsed arguments.
@@ -378,18 +467,43 @@ def cmd_docs(args: argparse.Namespace) -> int:
     Returns:
         Process exit code.
     """
+    build = args.build or args.action == "build"
     try:
         root = docs_root(args.source)
-        argv, how = docs_command(root, args.host, args.port, build=args.build)
     except LiberaQtError as exc:
         print(f"{exc}")
         return 2
 
+    # Where `build` writes. Only the packaged copy needs redirecting -- it lives in
+    # site-packages, and mkdocs cleans its destination unconditionally. For a checkout this
+    # stays `root/site`, byte-identical to what it has always done; defaulting to the working
+    # directory instead would silently wipe any `./site` the user happens to keep, and would
+    # abort outright when run from inside `docs/` (mkdocs refuses a site_dir under docs_dir).
+    if args.site_dir:
+        site_dir = Path(args.site_dir).resolve()
+    elif root == PACKAGED_DOCS:
+        site_dir = Path.cwd() / "site"
+    else:
+        site_dir = root / "site"
+
+    try:
+        if build:
+            check_site_dir_is_disposable(site_dir, explicit=bool(args.site_dir))
+        argv, how = docs_command(root, args.host, args.port, build=build, site_dir=site_dir)
+    except LiberaQtError as exc:
+        print(f"{exc}")
+        return 2
+
+    # flush=True: mkdocs inherits this stdout and writes to it for as long as it runs, so
+    # without it a redirected or piped run shows nothing until the server stops.
+    print(f"documentation sources: {root}", flush=True)
     url = docs_url(root, args.host, args.port, with_prefix=how.startswith("mkdocs"))
-    if not args.build:
+    if build:
+        print(f"building into {site_dir}", flush=True)
+    else:
         print(f"serving the documentation with {how}")
         print(f"  {url}")
-        print("  press Ctrl+C to stop")
+        print("  press Ctrl+C to stop", flush=True)
         if args.open:
             # Opened before the server is up on purpose: the browser retries, and waiting for a
             # server that never returns would mean never opening it.
@@ -520,12 +634,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-name", default="test_recorded")
     p.set_defaults(func=cmd_record)
 
-    p = sub.add_parser("docs", help="serve the documentation for local viewing")
+    p = sub.add_parser("docs", help="serve or build the documentation for local viewing")
+    # A verb, because every other noun in this CLI takes one ("agents list", "agents build").
+    # A plain positional with choices rather than a nested subparser: nested would force
+    # --host/--port/--open/--source to be declared once per verb, and would make bare
+    # `liberaqt docs` a special case.
+    p.add_argument("action", nargs="?", choices=("serve", "build"), default="serve",
+                   help="serve the documentation (the default), or build it and exit")
     p.add_argument("--host", default="127.0.0.1", help="address to bind (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8000, help="port to bind (default 8000)")
     p.add_argument("--open", action="store_true", help="open a browser at the served address")
     p.add_argument("--build", action="store_true",
-                   help="build into site/ and exit, instead of serving")
+                   help="older spelling of `liberaqt docs build`")
+    p.add_argument("--site-dir", help="where `build` writes the HTML (default: site/ beside "
+                                      "mkdocs.yml, or ./site for a packaged install)")
     p.add_argument("--source", help="directory holding mkdocs.yml")
     p.set_defaults(func=cmd_docs)
 

@@ -21,6 +21,7 @@ public:
     QString handleFor(QObject *object);
     QObject *resolve(const QString &handle) const;      // throws CommandError on miss
     QObject *resolveOrNull(const QString &handle) const; // empty handle -> nullptr
+    QObject *resolveRoot(const QString &handle) const;   // empty -> nullptr, dead -> throws
 
     void forget(QObject *object);
     int size() const { return m_byHandle.size(); }

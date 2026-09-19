@@ -19,7 +19,37 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
       - run: ruff check src tests
-      - run: pytest tests/ -q
+      # tests/unit, not tests/: the live suites under tests/e2e drive real applications and are
+      # opted into by path. Naming the unit tree keeps CI from even importing them, so a broken
+      # import over there cannot redden a run that never intended to execute it.
+      - run: pytest tests/unit -q
+
+  # The documentation ships inside the wheel (force-include in pyproject). Nothing in the unit
+  # tests can notice when that stops working -- they never build a wheel -- and the failure is
+  # silent: `liberaqt docs` degrades to the error the packaging exists to remove, with CI green.
+  packaging:
+    name: Wheel carries the documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build --wheel
+      - name: Assert the docs are in the wheel
+        run: |
+          python - <<'EOF'
+          import glob, sys, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          if "liberaqt/_docs/mkdocs.yml" not in names:
+              sys.exit(f"{wheel} has no liberaqt/_docs/mkdocs.yml")
+          pages = [n for n in names if n.startswith("liberaqt/_docs/docs/") and n.endswith(".md")]
+          if not pages:
+              sys.exit(f"{wheel} carries mkdocs.yml but no documentation pages")
+          print(f"{wheel}: mkdocs.yml + {len(pages)} pages")
+          EOF
 
   # Builds the agent on every supported ABI. This is a compile check only: nothing here runs the
   # agent, because the tests that drove real Qt applications have been removed. A green matrix

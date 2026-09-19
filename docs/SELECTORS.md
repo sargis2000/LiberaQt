@@ -79,8 +79,9 @@ because that is what the test author sees in the .qml file. The C++ class is sti
 ## 5. Deterministic ordering and strictness
 
 * Candidates are collected depth-first, in child-insertion order — stable across runs.
-* A locator resolving to >1 object raises `AmbiguousSelector`. Opt out with `.first`, `.last`,
-  `.nth(i)`, or `strict=False`.
+* A locator resolving to >1 object raises `AmbiguousSelector`. Opt out with `.first`, `.last`
+  or `.nth(i)`. There is no `strict=False`: keyword arguments to `locator()` are an
+  alternative *to* a selector string, so passing both raises `InvalidSelectorError`.
 * `.filter(has=..., has_text=...)` narrows client-side without a second round trip: the filter is
   compiled into the same selector node.
 

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(python -m mkdocs:*)",
+      "Bash(python -m build:*)",
+      "Bash(python -c:*)",
+      "Bash(pip install -e .:*)",
+      "Bash(liberaqt doctor:*)",
+      "Bash(liberaqt agents list:*)",
+      "Bash(liberaqt agents kits:*)",
+      "Bash(liberaqt inspect:*)",
+      "Bash(liberaqt docs:*)",
+      "Bash(cmake:*)",
+      "Bash(ninja:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git ls-files:*)"
+    ],
+    "ask": [
+      "Bash(pytest tests/e2e/libero:*)",
+      "Bash(python -m pytest tests/e2e/libero:*)"
+    ]
+  }
+}

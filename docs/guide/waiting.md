@@ -28,7 +28,7 @@ once, which is a race you will eventually lose.
 | `to_have_text("...")` | its text equals exactly |
 | `to_contain_text("...")` | its text contains |
 | `to_match_text(r"...")` | its text matches a regular expression |
-| `to_have_value(v)` | its value equals |
+| `to_have_value(v)` | its value equals -- a slider or spin box, **not** a text field |
 | `to_have_property("name", v)` | that `Q_PROPERTY` equals |
 | `to_have_count(n)` | the selector matches exactly `n` objects |
 | `to_have_title("...")` | (windows) the title equals |

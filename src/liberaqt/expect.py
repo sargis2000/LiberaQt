@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from .errors import LiberaQtError
+from .errors import LiberaQtError, ObjectNotFoundError, StaleObjectError
 from .waits import retry
 
 if TYPE_CHECKING:
@@ -21,6 +21,26 @@ if TYPE_CHECKING:
 
 def _normalise(text: str) -> str:
     return " ".join((text or "").replace("&", "").split())
+
+
+def _root_cause(exc: BaseException) -> BaseException:
+    """The original failure behind a chain of re-raises.
+
+    ``retry`` re-raises a retryable error as ``TimeoutError`` with the real one on ``__cause__``,
+    and an action nests two of those. The wrapper's name says only that time ran out; the root
+    says what was actually wrong.
+
+    Args:
+        exc: The exception caught.
+
+    Returns:
+        The deepest ``__cause__`` in the chain, or ``exc`` itself.
+    """
+    seen = {id(exc)}
+    while exc.__cause__ is not None and id(exc.__cause__) not in seen:
+        exc = exc.__cause__
+        seen.add(id(exc))
+    return exc
 
 
 class LocatorAssertions:
@@ -71,13 +91,19 @@ class LocatorAssertions:
             self._timeout if self._timeout is not None else self._loc._session.timeouts.default
         )
 
-        state = {"actual": "<never evaluated>"}
+        state: dict[str, Any] = {"actual": "<never evaluated>", "cause": None}
 
         def once():
             try:
-                ok, actual = probe()
+                # The loop below owns the waiting. Without this the probe's own resolve() would
+                # retry for the *session* timeout on every poll, so a single poll outlasts the
+                # deadline this call was given -- `timeout=` would be printed but not honoured.
+                with self._loc._session.timeouts.override(0):
+                    ok, actual = probe()
             except LiberaQtError as exc:
-                ok, actual = False, f"<{type(exc).__name__}>"
+                root = _root_cause(exc)
+                state["cause"] = root
+                ok, actual = False, f"<{type(root).__name__}>"
             state["actual"] = actual
             if ok is not self._negated:
                 return True
@@ -87,10 +113,14 @@ class LocatorAssertions:
             retry(once, timeout=timeout, retry_on=(_Retry,), description=description)
         except Exception as exc:  # noqa: BLE001 - re-raised as an assertion below
             neg = "not " if self._negated else ""
+            # The agent's own diagnostic -- near misses, the ambiguity list with geometries --
+            # is the most useful thing in a red run, and a type name alone threw it away.
+            cause = state["cause"]
             msg = (
                 f"expected {self._loc!r} {neg}{description}"
                 + (f"\n  expected: {expected!r}" if expected is not None else "")
                 + f"\n  actual:   {state['actual']!r}"
+                + (f"\n  cause:    {cause}" if cause is not None else "")
                 + f"\n  timeout:  {timeout:.1f}s"
             )
             raise AssertionError(msg) from exc
@@ -111,8 +141,22 @@ class LocatorAssertions:
         Args:
             timeout: Seconds to keep retrying.
         """
-        self._check("to be hidden", lambda: (not self._loc.is_visible, self._loc.is_visible),
-                    timeout=timeout)
+        def probe():
+            try:
+                visible = self._loc.is_visible
+            except LiberaQtError as exc:
+                # An object that is not there is not visible. Without this, `to_be_hidden` and
+                # `not_.to_be_visible` disagreed about a destroyed object: the negated form
+                # passed and this one retried until it timed out.
+                #
+                # The root cause, not the exception: resolve() re-raises a not-found as
+                # TimeoutError, so matching on the outer type catches nothing.
+                if isinstance(_root_cause(exc), (ObjectNotFoundError, StaleObjectError)):
+                    return True, "<not present>"
+                raise
+            return not visible, visible
+
+        self._check("to be hidden", probe, timeout=timeout)
 
     def to_be_enabled(self, timeout: float | None = None):
         """Assert the object accepts input.

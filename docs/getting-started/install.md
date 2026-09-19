@@ -82,7 +82,7 @@ is what lets its own unit tests run on a machine with no Qt installed.
 |-------|---------|--------------|
 | `yaml` | `pip install "liberaqt[yaml] @ git+..."` | [object maps](../guide/object-maps.md) — needed for `win.obj("name")` |
 | `dev` | `pip install -e ".[dev]"` | pytest, ruff, mypy — for working on LiberaQT |
-| `docs` | `pip install -e ".[docs]"` | mkdocs, for [`liberaqt docs`](../guide/cli.md#docs) |
+| `docs` | `pip install -e ".[docs]"` | mkdocs, to *rebuild* the site for [`liberaqt docs`](../guide/cli.md#docs). The pages themselves ship in the wheel |
 
 Combine them: `pip install -e ".[dev,docs]"`.
 

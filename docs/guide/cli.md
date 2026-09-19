@@ -159,27 +159,40 @@ liberaqt inspect "C:\Path\app.exe" --depth 3 -- --some-app-flag
 
 ## docs
 
-Serves this documentation for local reading:
+Serves this documentation for local reading, or builds it:
 
 ```bash
-liberaqt docs                      # http://127.0.0.1:8000/LiberaQt/
-liberaqt docs --port 9000 --open   # a different port, and open a browser
-liberaqt docs --build              # build into site/ and exit
-liberaqt docs --host 0.0.0.0       # reachable from another machine
+liberaqt docs                           # http://127.0.0.1:8000/LiberaQt/
+liberaqt docs serve --port 9000 --open  # a different port, and open a browser
+liberaqt docs build                     # build and exit
+liberaqt docs build --site-dir out      # build somewhere of your choosing
+liberaqt docs --host 0.0.0.0            # reachable from another machine
 ```
 
 | Option | Effect |
 |--------|--------|
+| `serve` / `build` | what to do. `serve` is the default, so bare `liberaqt docs` still serves |
 | `--host` | address to bind (default `127.0.0.1`) |
 | `--port` | port to bind (default `8000`) |
 | `--open` | open a browser at the served address |
-| `--build` | build into `site/` and exit, instead of serving |
+| `--build` | older spelling of `liberaqt docs build` |
+| `--site-dir` | where `build` writes the HTML |
 | `--source` | directory holding `mkdocs.yml`, if it is not alongside |
+
+**You do not need a checkout.** The pages travel inside the wheel at `liberaqt/_docs/`, so
+`liberaqt docs` works straight after `pip install`. When you *are* in a checkout, that wins, so
+editing `docs/` and serving them stays one step.
 
 With the `docs` extra installed it runs `mkdocs serve`, which **rebuilds a page as you edit it**.
 Without it, it falls back to serving whatever was last built into `site/` over `http.server`, and
 says so — no live reload, but you can still read the documentation without installing a builder.
-`--build` has no fallback, because `http.server` can serve a site and cannot build one.
+`build` has no fallback, because `http.server` can serve a site and cannot build one.
+
+!!! warning "`build` erases its destination"
+    mkdocs cleans the directory it builds into. The default is `site/` beside `mkdocs.yml` in a
+    checkout, and `./site` for an installed copy -- so the command refuses a `site/` that holds
+    anything other than a previous build, rather than deleting your files. Pass `--site-dir` to
+    say you meant it.
 
 !!! note "The address is not the root"
     mkdocs mounts the site under the path in `site_url`, locally as well as when published, so

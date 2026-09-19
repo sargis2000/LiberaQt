@@ -34,6 +34,9 @@ import pytest
 from liberaqt import LiberaQt, LiberaQtError
 from liberaqt.nlview import NLVIEW_CLASS, NlviewCanvas
 
+#: This suite writes a Libero project to a fixed path outside any tmp dir.
+pytestmark = pytest.mark.writes_disk
+
 LIBERO_GLOB = "C:/Microchip/Libero_SoC_*/Libero_SoC/Designer/bin/libero.exe"
 PROJECT_DIR = Path(r"C:\Users\Public\lqt_nlview")
 PROJECT_NAME = f"nlv_{os.getpid()}"
