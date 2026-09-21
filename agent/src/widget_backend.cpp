@@ -154,8 +154,16 @@ QVariantMap WidgetBackend::modelData(QObject *object, int maxRows)
     QStringList headers;
     headers.reserve(columns);
     for (int c = 0; c < columns; ++c) {
-        QString header = model->headerData(c, Qt::Horizontal, Qt::DisplayRole).toString();
-        if (header.isEmpty())
+        const QVariant raw = model->headerData(c, Qt::Horizontal, Qt::DisplayRole);
+        QString header = raw.toString();
+        // QAbstractItemModel's *default* headerData returns the 1-based section number as an
+        // int, so a model that sets no headers -- most QListViews, any bare QStandardItemModel
+        // -- yields "1", "2", ... That is never what a caller means by a column key, it is
+        // never empty so the fallback below could not fire, and it disagreed with cell(row,
+        // column), which is 0-based. The int type is what distinguishes Qt's default from a
+        // model that genuinely captions a column "1".
+        const bool qtDefault = raw.userType() == QMetaType::Int && raw.toInt() == c + 1;
+        if (header.isEmpty() || qtDefault)
             header = QString::number(c);
         headers.append(header);
     }
@@ -425,8 +433,17 @@ int columnFor(QAbstractItemModel *model, const QVariant &column)
         return 0;
     bool numeric = false;
     const int index = column.toInt(&numeric);
-    if (numeric)
+    if (numeric) {
+        // Unchecked, model->index(r, 99) is simply invalid and data() on it is empty, so
+        // cell(0, 99).text answered "" forever -- a test that keeps passing after the column
+        // it names has gone. The row path already reports this properly; mirror it.
+        if (index < 0 || index >= model->columnCount()) {
+            throw CommandError(ErrorCode::NotFound,
+                               QStringLiteral("column %1 is out of range; the view has %2")
+                                   .arg(index).arg(model->columnCount()));
+        }
         return index;
+    }
     const QString caption = column.toString();
     for (int c = 0; c < model->columnCount(); ++c) {
         if (model->headerData(c, Qt::Horizontal, Qt::DisplayRole).toString() == caption)

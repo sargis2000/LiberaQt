@@ -286,6 +286,19 @@ KeyTarget keyTarget(ObjectRegistry &registry, const QVariantMap &params)
     if (auto *named = qobject_cast<QWidget *>(object)) {
         if (!named->hasFocus() && named->focusPolicy() != Qt::NoFocus)
             named->setFocus(Qt::MouseFocusReason);
+        // A widget that cannot take focus will not receive what follows: native keys go to the
+        // window and Qt routes them to whatever does have focus. Typing at a QStatusBar
+        // therefore edited an unrelated field and reported success. Refuse instead of
+        // succeeding somewhere else. A window is exempt -- aiming at one is precisely how
+        // Window.keyboard.* is meant to work.
+        if (!named->isWindow() && !named->hasFocus() && !named->focusProxy()
+            && named->focusPolicy() == Qt::NoFocus) {
+            throw CommandError(ErrorCode::NotActionable,
+                               QStringLiteral("%1 cannot take keyboard focus, so it would not "
+                                              "receive this input; aim at the editable widget "
+                                              "itself, or at the window")
+                                   .arg(QString::fromUtf8(named->metaObject()->className())));
+        }
         target.widget = named;
     } else {
         QWidget *top = implicitKeyWindow();
@@ -546,6 +559,17 @@ QVariantMap InputSynth::setText(ObjectRegistry &registry, const QVariantMap &par
     if (readOnly.isValid() && readOnly.toBool()) {
         throw CommandError(ErrorCode::NotActionable,
                            QStringLiteral("%1 is read-only; a user could not type into it")
+                               .arg(QString::fromUtf8(object->metaObject()->className())));
+    }
+
+    // Disabled, for the same reason as read-only. This command owns its own preconditions
+    // because the generic actionability probe is wrong for it: the probe requires visibility,
+    // and filling a field on a form page that is not currently shown is exactly what this is
+    // for. Enabled and writable are the conditions that actually matter here.
+    const QVariant enabled = object->property("enabled");
+    if (enabled.isValid() && !enabled.toBool()) {
+        throw CommandError(ErrorCode::NotActionable,
+                           QStringLiteral("%1 is disabled; a user could not type into it")
                                .arg(QString::fromUtf8(object->metaObject()->className())));
     }
 

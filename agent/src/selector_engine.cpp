@@ -2,6 +2,8 @@
 // Copyright 2026 Sargis Khachatryan
 #include "selector_engine.h"
 
+#include <QSet>
+
 #include "object_registry.h"
 
 #include <QApplication>
@@ -303,7 +305,29 @@ QVariantList SelectorEngine::nearMisses(const Selector &selector, QObject *root,
     last.has.reset();
     last.parent.reset();
 
-    for (QObject *candidate : find(relaxed, root, limit)) {
+    QObjectList candidates = find(relaxed, root, limit);
+
+    // Relaxing everything *except* the type means a typo'd type relaxes to itself and finds
+    // nothing -- so the best diagnostic in the product switched off for the commonest mistake
+    // of all. "QPushButtonn" reported no near misses while "QDockWidget#IndexWindw" reported a
+    // perfect list. When the type alone matches nothing, drop it too and show what is actually
+    // there, which turns "no such thing" into "did you mean one of these".
+    if (candidates.isEmpty() && !last.type.isEmpty() && last.type != QStringLiteral("*")) {
+        Selector anyType = relaxed;
+        anyType.steps.last().type.clear();
+        QSet<QString> seen;
+        for (QObject *candidate : find(anyType, root, -1)) {
+            const QString className = QString::fromUtf8(candidate->metaObject()->className());
+            if (seen.contains(className))
+                continue;
+            seen.insert(className);
+            candidates.append(candidate);
+            if (candidates.size() >= limit)
+                break;
+        }
+    }
+
+    for (QObject *candidate : candidates) {
         QVariantMap entry;
         entry.insert(QStringLiteral("class"),
                      QString::fromUtf8(candidate->metaObject()->className()));

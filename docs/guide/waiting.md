@@ -4,6 +4,21 @@ GUI tests fail intermittently for one reason above all others: they check someth
 application is ready. LiberaQT's answer is that **everything retries by default**, so you should
 almost never write a sleep.
 
+Item views retry too, which matters because a view filling from a worker thread is the commonest
+asynchronous thing a desktop application does -- and `wait_for_idle()` does *not* cover it, since
+the event queue drains while the model is still empty:
+
+```python
+tree.row(index=0, timeout=30)          # waits for the model to populate
+tree.item("Synthesize", timeout=30)
+tree.cell(0, "Status", timeout=30)
+```
+
+The one deliberate exception is `Window.menu(path)`, which takes no `timeout=` and does not
+retry: a menu is built before it is shown, so a missing entry is a mistake rather than something
+to wait for, and failing at once turns a wrong path into a 0.02s error instead of a spent
+timeout.
+
 ## `expect` — assertions that retry
 
 ```python

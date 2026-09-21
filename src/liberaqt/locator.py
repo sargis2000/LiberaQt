@@ -369,7 +369,12 @@ class Locator:
             text: Text to set. Empty clears the field.
             timeout: Seconds to wait for the object to become editable.
         """
-        self._act(Cmd.SET_TEXT, {"text": text, "mode": "synthetic"}, timeout=timeout)
+        # actionable=False because the generic probe requires visibility, which contradicts
+        # the paragraph above: a field on a form page that is not currently shown is hidden.
+        # input.set_text enforces the conditions that actually matter for it -- not read-only,
+        # not disabled -- itself.
+        self._act(Cmd.SET_TEXT, {"text": text, "mode": "synthetic"}, timeout=timeout,
+                  actionable=False)
 
     def type(self, text: str, delay: float = 0.0, timeout: float | None = None,
              mode: str | None = None) -> None:
@@ -960,11 +965,16 @@ class Locator:
 
     # ------------------------------------------------------------------ item views
 
-    def to_records(self) -> list[dict]:
+    def to_records(self, max_rows: int | None = None) -> list[dict]:
         """Read a model-backed view's contents as one dict per row.
 
-        Keys come from the horizontal header, falling back to the column index where a column
-        has no header text.
+        Keys come from the horizontal header, falling back to the **zero-based** column index
+        where a column has no header text -- the same numbering :meth:`cell` uses.
+
+        Args:
+            max_rows: Stop after this many rows. A view can be very large (Qt Assistant's index
+                is over 34,000 rows), and polling one to see whether it has populated should not
+                cost a megabyte a time.
 
         Returns:
             One dict per row, in model order.
@@ -972,7 +982,23 @@ class Locator:
         Raises:
             UnsupportedOperationError: The object is not a model-backed view.
         """
-        return self._session.call(Cmd.MODEL_DATA, {"handle": self.resolve()}).get("rows", [])
+        params: dict[str, Any] = {"handle": self.resolve()}
+        if max_rows is not None:
+            params["max_rows"] = max_rows
+        return self._session.call(Cmd.MODEL_DATA, params).get("rows", [])
+
+    def headers(self) -> list[str]:
+        """The view's horizontal header captions, in column order.
+
+        Returns:
+            One caption per column; the zero-based index as a string where a column has none.
+
+        Raises:
+            UnsupportedOperationError: The object is not a model-backed view.
+        """
+        return self._session.call(
+            Cmd.MODEL_DATA, {"handle": self.resolve(), "max_rows": 0}
+        ).get("headers", [])
 
     def parent(self) -> Locator:
         """The object one level above this one in the tree.
@@ -1037,27 +1063,53 @@ class Locator:
         )
         return _HandleLocator(self._session, self._selector, result["handle"])
 
-    def row(self, has_text: str | None = None, index: int | None = None) -> Locator:
+    def _item_rect(self, params: dict, timeout: float | None, description: str) -> Locator:
+        """Resolve an item-view address, retrying while the model fills.
+
+        An item view populated from a worker thread is the commonest asynchronous thing a
+        desktop application does, and ``wait_for_idle`` does not cover it: the event queue
+        drains while the model is still empty. Without this these three read as the one corner
+        of the API that does not wait, in a library whose first promise is that everything does.
+
+        Args:
+            params: Command parameters, minus the handle.
+            timeout: Seconds to keep retrying. Defaults to the session timeout.
+            description: Phrase for the timeout message.
+
+        Returns:
+            A locator bound to the matched item.
+        """
+        timeout = self._session.timeouts.resolve(timeout)
+
+        def once() -> Locator:
+            result = self._session.call(
+                Cmd.ITEM_RECT, {"handle": self.resolve(timeout=0), **params}
+            )
+            return _HandleLocator(self._session, self._selector, result["handle"])
+
+        return retry(once, timeout=timeout, description=description)
+
+    def row(self, has_text: str | None = None, index: int | None = None,
+            timeout: float | None = None) -> Locator:
         """Locate a row in an item view.
 
         Args:
             has_text: Match the row containing this text in any cell.
             index: Zero-based row index, as an alternative to ``has_text``.
+            timeout: Seconds to keep retrying while the model fills.
 
         Returns:
             A locator bound to the matched row.
 
         Raises:
-            ObjectNotFoundError: No row matched.
+            TimeoutError: No row matched in time, wrapping the real reason.
         """
         # "has_text" means containing, matching filter(has_text=...) and the docstring above.
         # select_item() deliberately stays exact: choosing "Widget" should not select "Widgets".
-        params = {"handle": self.resolve(), "text": has_text, "row": index,
-                  "match": "contains"}
-        result = self._session.call(Cmd.ITEM_RECT, params)
-        return _HandleLocator(self._session, self._selector, result["handle"])
+        return self._item_rect({"text": has_text, "row": index, "match": "contains"},
+                               timeout, f"row in {self._selector}")
 
-    def item(self, text: str) -> Locator:
+    def item(self, text: str, timeout: float | None = None) -> Locator:
         """Locate an item by its exact text, at any depth.
 
         The exact-match counterpart to :meth:`row`, whose ``has_text`` means *containing*. Reach
@@ -1069,32 +1121,32 @@ class Locator:
 
         Args:
             text: The item's text, matched exactly.
+            timeout: Seconds to keep retrying while the model fills.
 
         Returns:
             A locator bound to the matched item.
 
         Raises:
-            ObjectNotFoundError: No item has that exact text.
+            TimeoutError: No item had that text in time, wrapping the real reason.
         """
-        result = self._session.call(Cmd.ITEM_RECT, {"handle": self.resolve(), "text": text})
-        return _HandleLocator(self._session, self._selector, result["handle"])
+        return self._item_rect({"text": text}, timeout, f"item {text!r} in {self._selector}")
 
-    def cell(self, row: int, column: int | str) -> Locator:
+    def cell(self, row: int, column: int | str, timeout: float | None = None) -> Locator:
         """Locate a single cell in an item view.
 
         Args:
             row: Zero-based row index.
-            column: Column index, or the column's header text.
+            column: Zero-based column index, or the column's header text.
+            timeout: Seconds to keep retrying while the model fills.
 
         Returns:
             A locator bound to the cell.
 
         Raises:
-            ObjectNotFoundError: No such cell.
+            TimeoutError: No such cell appeared in time, wrapping the real reason.
         """
-        result = self._session.call(Cmd.ITEM_RECT,
-                                    {"handle": self.resolve(), "row": row, "column": column})
-        return _HandleLocator(self._session, self._selector, result["handle"])
+        return self._item_rect({"row": row, "column": column}, timeout,
+                               f"cell ({row}, {column!r}) in {self._selector}")
 
     def __repr__(self) -> str:
         suffix = f":nth({self._index})" if self._index is not None else ""

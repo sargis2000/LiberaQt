@@ -85,6 +85,13 @@ pinned by `tests/e2e/qt/test_qml_live.py`.
   and the Quick splice compiles out entirely. CI's Qt 5.15 legs install no `qtdeclarative`, so
   those agents have no Quick support at all. Check this before debugging any QML failure.
 
+* **Qt 5.15's Assistant is not a drop-in target for the Qt 6 suites.** Its help viewer is a
+  `QTextBrowser`, not the `QLiteHtmlWidget` Qt 6 uses, so `test_wheel_scrolls_the_help_viewer`
+  fails there — and the wheel does not move that view's scroll bar through *any* target tried
+  (`HelpViewer`, `QTextBrowser`, the viewport). 62 of 63 pass on 5.15; this is a real unexplained
+  gap in 5.15 wheel delivery rather than a selector problem, and it is deliberately left red
+  rather than skipped. 6.5 and 6.7 are the versions the suites are green against.
+
 * **Object counts in a Quick scene track the window size.** qmleasing renders a grid of curve
   previews: 155 objects at 669px tall, 355 at 720px. Never assert an exact count against it.
 
@@ -326,6 +333,21 @@ offered their near misses as suggestions, and stopped only at actionability. Use
 `resolveRoot()` for anything that takes an optional root: empty stays `nullptr`, dead throws
 `Stale`. Note `dlg.title` always raised correctly; only the search path widened, which is why it
 went unnoticed.
+
+**Two commands own preconditions the generic actionability probe gets wrong.** The probe checks
+visibility *before* the `if (!nativeInput) return {}` escape, so synthetic delivery still demands
+a visible widget. That is right for a click and wrong for `input.set_text`, whose whole purpose is
+filling a field on a form page that is not currently shown — so `fill()` passes
+`actionable=False` and `InputSynth::setText` enforces what actually matters for it: not
+read-only, not disabled. Likewise `keyTarget` refuses a non-window widget that cannot take focus:
+native keys go to the *window* and Qt routes them to whatever has focus, so typing at a
+`QStatusBar` used to edit an unrelated field and report success.
+
+**`headerData` has a non-empty default, so "no header" cannot be tested with `isEmpty()`.**
+`QAbstractItemModel`'s default returns the 1-based section number *as an int*, which is never
+empty — so `modelData`'s index fallback was unreachable and `to_records()` handed back keys
+`"1", "2"` while `cell(row, column)` stayed 0-based. Detect the default by its int type, not by
+emptiness.
 
 **A widget that paints its own contents has nothing in the object tree**, so no selector will
 reach inside it — Libero's SmartDesign canvas (`Aqnlvcanvas::NlvSDWidget`, wrapping NLview) has no
