@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -35,8 +36,51 @@ from . import agent_registry
 from .errors import LiberaQtError
 
 #: Where archives are fetched from unless ``--from`` says otherwise. Overridable so that an
-#: organisation can host its own builds; there is no default public location yet.
+#: organisation can host its own builds -- a vendor-specific agent need not leave the network.
 BASE_URL_ENV = "LIBERAQT_AGENT_BASE_URL"
+
+#: Public builds, used when nothing else is configured.
+#:
+#: ``releases/latest/download`` is an alias GitHub resolves to the newest published release, so
+#: this does not have to be bumped per release and an install always gets current bits. A tag
+#: with no published archive 404s, which ``install`` reports as "not published for this ABI"
+#: rather than as a broken default.
+DEFAULT_BASE_URL = "https://github.com/sargis2000/LiberaQt/releases/latest/download"
+
+
+def resolve_base_url(base_url: str | None = None) -> str:
+    """Where to look for archives: the argument, then the environment, then public releases.
+
+    Args:
+        base_url: An explicit location, usually from ``--base-url``.
+
+    Returns:
+        A base URL with no trailing slash.
+    """
+    return (base_url or os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL).rstrip("/")
+
+
+def published_digest(tag: str, base_url: str | None = None) -> str:
+    """The sha256 published alongside an archive, or ``""`` when there is none.
+
+    A checksum file is 64 bytes where the archive is megabytes, which is what lets
+    ``liberaqt agents update`` answer "am I behind?" without downloading anything.
+
+    Args:
+        tag: Build tag.
+        base_url: Where ``<tag>.zip.sha256`` lives.
+
+    Returns:
+        The hex digest in lower case, or ``""`` if it could not be fetched.
+    """
+    source = f"{resolve_base_url(base_url)}/{archive_name(tag)}.sha256"
+    try:
+        text = _read(source).decode("utf-8", "replace")
+    except AgentInstallError:
+        return ""
+    # Accept a bare digest and the "<digest>  <name>" shasum format alike.
+    parts = text.strip().split()
+    return parts[0].lower() if parts else ""
 
 #: Files an agent archive must contain, relative to its root, for the install to be usable.
 REQUIRED_MEMBER = "plugins/generic"
@@ -150,6 +194,40 @@ def _unpack(data: bytes, prefix: Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _stamp_manifest(prefix: Path, source: str, digest: str) -> None:
+    """Add provenance to the manifest the archive carried.
+
+    The agent's CMake records what the build *is*; this adds where this copy of it came from,
+    which is what lets a later ``agents update`` compare against the published checksum without
+    downloading the archive again. An archive predating manifests has none, and gets a minimal
+    one rather than nothing, so the install is still identifiable.
+
+    Args:
+        prefix: The install prefix.
+        source: URL or path the archive was read from.
+        digest: sha256 of the archive as installed.
+    """
+    path = prefix / agent_registry.MANIFEST_NAME
+    try:
+        with open(path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        if not isinstance(manifest, dict):
+            manifest = {}
+    except (OSError, ValueError):
+        manifest = {"schema": 1, "revision": "unknown"}
+
+    manifest["source"] = source
+    manifest["archive_sha256"] = digest
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    except OSError:
+        # Provenance is a convenience; a read-only cache should not fail an otherwise good
+        # install over it.
+        pass
+
+
 def install(tag: str, source: str | None = None, base_url: str | None = None) -> Path:
     """Install an agent build into the cache and check it is usable.
 
@@ -166,22 +244,22 @@ def install(tag: str, source: str | None = None, base_url: str | None = None) ->
             was malformed, or what it unpacked to is not a working agent.
     """
     if source is None:
-        base = base_url or os.environ.get(BASE_URL_ENV, "")
-        if not base:
-            raise AgentInstallError(
-                f"no agent archive location is configured for {tag}",
-                hint=(
-                    f"Set {BASE_URL_ENV} to somewhere holding <tag>.zip, pass --from <url|path>, "
-                    "or build from source:\n"
-                    "  cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR\n"
-                    "  cmake --build build/agent --parallel\n"
-                    f"  cmake --install build/agent --prefix "
-                    f"{agent_registry.cache_dir() / 'agents' / tag}"
-                ),
-            )
-        source = f"{base.rstrip('/')}/{archive_name(tag)}"
+        source = f"{resolve_base_url(base_url)}/{archive_name(tag)}"
 
-    data = _read(source)
+    try:
+        data = _read(source)
+    except AgentInstallError as exc:
+        raise AgentInstallError(
+            f"could not fetch an agent archive for {tag}",
+            hint=(
+                f"Tried {source}\n"
+                f"  {exc}\n"
+                "Not every ABI is published -- Qt 5.15 msvc2015 and some 32-bit kits "
+                "have no runner to build them on. Build from a local Qt kit instead:\n"
+                f"  liberaqt agents build --tag {tag}\n"
+                f"Or point {BASE_URL_ENV} at somewhere that holds <tag>.zip."
+            ),
+        ) from exc
 
     # A checksum is verified when published and not demanded when it is not: an internal file
     # share may not have one, and refusing to install would push people to bypass this entirely.
@@ -201,6 +279,10 @@ def install(tag: str, source: str | None = None, base_url: str | None = None) ->
             f"{tag} unpacked into {prefix} but no plugin binary is there",
             hint="The archive does not match the tag it is named for.",
         )
+    # Record where these bits came from, so a later `agents update` can tell whether the
+    # published archive has moved on, by fetching 64 bytes rather than the whole thing.
+    _stamp_manifest(prefix, source, hashlib.sha256(data).hexdigest())
+
     if not build.advertises_abi_key():
         raise AgentInstallError(
             f"{tag} does not advertise the {build.abi_key} plugin key",

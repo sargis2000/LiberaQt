@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -51,36 +52,107 @@ jobs:
           print(f"{wheel}: mkdocs.yml + {len(pages)} pages")
           EOF
 
-  # Builds the agent on every supported ABI. This is a compile check only: nothing here runs the
-  # agent, because the tests that drove real Qt applications have been removed. A green matrix
-  # therefore says the C++ still builds against Qt 5.15 and 6.7 -- not that it works.
+  # Builds the agent on every ABI we can reach from a runner, and packages each as the
+  # <tag>.zip + <tag>.zip.sha256 pair that `liberaqt agents install` expects. On a version tag
+  # the publish job below attaches them to the release, which is what DEFAULT_BASE_URL points at.
+  #
+  # This is still a compile check, not a functional one: nothing here runs the agent. Two ABIs
+  # deliberately have no leg -- Qt 5.15 msvc2015 (no runner ships that toolset) and anything
+  # arm64 -- and `liberaqt agents install` names `agents build` as the way to get those.
   agent:
-    name: Agent build (Qt ${{ matrix.qt }}, ${{ matrix.os }})
+    name: Agent ${{ matrix.tag }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-22.04,  qt: "6.7.2",  tag: "qt6.7-linux-x86_64-gcc" }
-          - { os: ubuntu-22.04,  qt: "5.15.2", tag: "qt5.15-linux-x86_64-gcc" }
-          - { os: windows-2022,  qt: "6.7.2",  tag: "qt6.7-windows-x86_64-msvc2022" }
-          - { os: windows-2022,  qt: "5.15.2", tag: "qt5.15-windows-x86_64-msvc2019" }
+          - { os: ubuntu-22.04, qt: "5.15.2", arch: "gcc_64",           tag: "qt5.15-linux-x86_64-gcc" }
+          - { os: ubuntu-22.04, qt: "6.5.3",  arch: "gcc_64",           tag: "qt6.5-linux-x86_64-gcc" }
+          - { os: ubuntu-22.04, qt: "6.7.2",  arch: "gcc_64",           tag: "qt6.7-linux-x86_64-gcc" }
+          - { os: windows-2022, qt: "5.15.2", arch: "win64_msvc2019_64", tag: "qt5.15-windows-x86_64-msvc2019" }
+          - { os: windows-2022, qt: "5.15.2", arch: "win32_msvc2019",    tag: "qt5.15-windows-x86-msvc2019" }
+          - { os: windows-2022, qt: "5.15.2", arch: "win64_mingw81",     tag: "qt5.15-windows-x86_64-mingw",  mingw: "tools_mingw,qt.tools.win64_mingw810" }
+          - { os: windows-2022, qt: "6.5.3",  arch: "win64_msvc2019_64", tag: "qt6.5-windows-x86_64-msvc2019" }
+          - { os: windows-2022, qt: "6.5.3",  arch: "win64_mingw",       tag: "qt6.5-windows-x86_64-mingw",   mingw: "tools_mingw90" }
+          - { os: windows-2022, qt: "6.7.2",  arch: "win64_msvc2019_64", tag: "qt6.7-windows-x86_64-msvc2019" }
+          - { os: windows-2022, qt: "6.7.2",  arch: "win64_mingw",       tag: "qt6.7-windows-x86_64-mingw",   mingw: "tools_mingw1310" }
     steps:
       - uses: actions/checkout@v4
+        with:
+          # `git describe` stamps the revision into the manifest; a shallow clone has no tags.
+          fetch-depth: 0
 
       - uses: jurplel/install-qt-action@v4
         with:
           version: ${{ matrix.qt }}
+          arch: ${{ matrix.arch }}
           modules: ${{ startsWith(matrix.qt, '6') && 'qtdeclarative' || '' }}
+          tools: ${{ matrix.mingw || '' }}
 
       - name: Build agent
+        shell: bash
         run: |
-          cmake -S agent -B build/agent -DCMAKE_BUILD_TYPE=Release
+          set -euo pipefail
+          generator=""
+          if [[ "${{ matrix.tag }}" == *mingw* ]]; then
+            # The MinGW Makefiles generator chokes on drive-letter colons; Ninja does not.
+            generator="-G Ninja"
+            mingw_bin=$(find "$IQTA_TOOLS" -maxdepth 3 -type d -name bin | grep -i mingw | head -1)
+            export PATH="$mingw_bin:$PATH"
+            generator="$generator -DCMAKE_CXX_COMPILER=$mingw_bin/g++.exe"
+          fi
+          cmake -S agent -B build/agent $generator -DCMAKE_BUILD_TYPE=Release
           cmake --build build/agent --config Release --parallel
-          cmake --install build/agent --prefix ${{ github.workspace }}/agents/${{ matrix.tag }}
+          cmake --install build/agent --prefix "${{ github.workspace }}/agents/${{ matrix.tag }}"
 
-      - name: Upload agent artifact
-        uses: actions/upload-artifact@v4
+      - name: Package as <tag>.zip + .sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Zip the *contents* of the prefix, so the archive unpacks straight onto an install
+          # prefix. agent_install tolerates one wrapping directory, but not needing one is
+          # simpler to reason about.
+          (cd "agents/${{ matrix.tag }}" && python -c "
+          import shutil, sys
+          shutil.make_archive(sys.argv[1], 'zip', '.')
+          " "${{ github.workspace }}/dist/${{ matrix.tag }}")
+          cd dist
+          sha256sum "${{ matrix.tag }}.zip" > "${{ matrix.tag }}.zip.sha256"
+          cat "${{ matrix.tag }}.zip.sha256"
+
+      - name: Check the archive installs
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -e .
+          liberaqt agents install --tag "${{ matrix.tag }}" --from "dist/${{ matrix.tag }}.zip"
+          liberaqt agents list
+
+      - uses: actions/upload-artifact@v4
         with:
           name: agent-${{ matrix.tag }}
-          path: agents/${{ matrix.tag }}
+          path: dist/${{ matrix.tag }}.zip*
+
+  # Attaches every archive to the GitHub release, which is where DEFAULT_BASE_URL in
+  # agent_install.py points. `releases/latest/download/<tag>.zip` is a GitHub alias for the most
+  # recent release, so `liberaqt agents install` needs no version in its URL.
+  publish:
+    name: Publish agents to the release
+    needs: [client, packaging, agent]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.zip.sha256

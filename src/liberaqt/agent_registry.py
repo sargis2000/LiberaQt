@@ -9,6 +9,7 @@ mystifying "agent never connected" failure. So: detect first, fail loudly with a
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -40,6 +41,15 @@ def cache_dir() -> Path:
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     return base / "liberaqt"
+
+
+#: Name of the manifest an install carries, at the prefix root.
+#:
+#: Written by the agent's CMake (and topped up by agent_install with where the archive came
+#: from). Without it an installed agent is an anonymous .dll and "is mine out of date?" has no
+#: answer -- which is why every build predating this reports its revision as unknown rather than
+#: pretending to be current.
+MANIFEST_NAME = "liberaqt-agent.json"
 
 
 @dataclass
@@ -88,6 +98,29 @@ class AgentBuild:
             A key such as ``"liberaqt_5_15_64_msvc"``.
         """
         return plugin_key_for(self.qt, self.platform_tag, self.compiler)
+
+    @property
+    def manifest(self) -> dict:
+        """What this install records about itself, empty when it predates manifests.
+
+        Returns:
+            The parsed manifest, or ``{}`` when absent or unreadable.
+        """
+        try:
+            with open(self.root / MANIFEST_NAME, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+        except (OSError, ValueError):
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
+
+    @property
+    def revision(self) -> str:
+        """Source revision this build came from, or ``"unknown"``.
+
+        Returns:
+            A ``git describe`` string such as ``"443bf85"``, possibly ``-dirty``.
+        """
+        return str(self.manifest.get("revision") or "unknown")
 
     def advertises_abi_key(self) -> bool:
         """Whether the installed binary carries its architecture's plugin key.

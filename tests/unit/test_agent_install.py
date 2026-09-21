@@ -12,7 +12,7 @@ import zipfile
 import pytest
 
 from liberaqt import agent_registry
-from liberaqt.agent_install import AgentInstallError, archive_name, install
+from liberaqt.agent_install import AgentInstallError, archive_name, install, resolve_base_url
 
 TAG = "qt5.15-windows-x86_64-msvc2019"
 
@@ -137,14 +137,36 @@ def test_the_environment_supplies_the_base_url(cache, tmp_path, monkeypatch):
     assert install(TAG).is_dir()
 
 
-def test_with_nowhere_to_look_it_says_how_to_build_one(cache, monkeypatch):
-    """The message has to be actionable: there is no public download location yet."""
-    monkeypatch.delenv("LIBERAQT_AGENT_BASE_URL", raising=False)
+def test_an_unpublished_abi_says_how_to_build_it(cache, monkeypatch, tmp_path):
+    """Not every ABI has a runner to build it on, so the default URL will 404 for some.
+
+    The message has to name the way forward rather than just reporting an HTTP error: building
+    from a local Qt kit is the answer for exactly the ABIs CI cannot publish.
+    """
+    # An empty local directory stands in for the releases page: nothing is published there.
+    monkeypatch.setenv("LIBERAQT_AGENT_BASE_URL", str(tmp_path))
     with pytest.raises(AgentInstallError) as excinfo:
         install(TAG)
     text = str(excinfo.value)
+    assert "liberaqt agents build" in text, "the message must name the way forward"
+    assert TAG in text
     assert "LIBERAQT_AGENT_BASE_URL" in text
-    assert "cmake" in text
+
+
+def test_the_default_location_is_the_public_releases_page(monkeypatch):
+    """With nothing configured, an install should reach published builds rather than refuse."""
+    monkeypatch.delenv("LIBERAQT_AGENT_BASE_URL", raising=False)
+    assert resolve_base_url().startswith("https://github.com/sargis2000/LiberaQt/releases")
+
+
+def test_the_environment_beats_the_default(monkeypatch):
+    monkeypatch.setenv("LIBERAQT_AGENT_BASE_URL", "https://inside.example/agents/")
+    assert resolve_base_url() == "https://inside.example/agents"
+
+
+def test_an_explicit_base_url_beats_both(monkeypatch):
+    monkeypatch.setenv("LIBERAQT_AGENT_BASE_URL", "https://inside.example/agents")
+    assert resolve_base_url("https://other.example/x/") == "https://other.example/x"
 
 
 def test_a_missing_archive_is_reported_not_swallowed(cache, tmp_path):

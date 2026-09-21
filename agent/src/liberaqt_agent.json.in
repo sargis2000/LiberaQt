@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "agent_version": "@PROJECT_VERSION@",
+  "protocol": @LIBERAQT_PROTOCOL_VERSION@,
+  "revision": "@LIBERAQT_REVISION@",
+  "qt": "@LIBERAQT_QT_VERSION@",
+  "plugin_key": "@LIBERAQT_PLUGIN_KEY@",
+  "compiler": "@LIBERAQT_ABI_COMPILER@",
+  "abi_bits": @LIBERAQT_ABI_BITS@,
+  "quick": @LIBERAQT_QUICK_JSON@
+}

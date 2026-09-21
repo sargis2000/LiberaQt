@@ -120,6 +120,92 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+#: What `agents update` decided about one installed build.
+_CURRENT = "current"
+_BEHIND = "update available"
+_LOCAL = "local build"
+_UNKNOWN = "cannot tell"
+
+
+def _update_state(build, base_url: str | None) -> tuple[str, str]:
+    """Decide whether an installed agent is behind what is published.
+
+    Answered from the 64-byte checksum rather than the archive, so checking every ABI costs
+    almost nothing. A locally built agent has no published counterpart to compare against and is
+    deliberately left alone: overwriting someone's own build with a release would be rude, and
+    it is usually *newer*, not older.
+
+    Args:
+        build: The installed :class:`~liberaqt.agent_registry.AgentBuild`.
+        base_url: Where archives live, or None for the configured default.
+
+    Returns:
+        ``(state, detail)``.
+    """
+    manifest = build.manifest
+    if not manifest:
+        return _UNKNOWN, "no manifest; predates version stamping -- reinstall to get one"
+    # Lower-cased on both sides: published_digest normalises what it fetches, but the manifest
+    # may have been written by something else, and a case difference is not an update.
+    installed_digest = str(manifest.get("archive_sha256") or "").lower()
+    if not installed_digest:
+        return _LOCAL, f"built here at {build.revision}; `liberaqt agents build` to refresh"
+
+    published = agent_install.published_digest(str(build), base_url=base_url)
+    if not published:
+        return _UNKNOWN, "nothing published for this ABI at that location"
+    if published == installed_digest:
+        return _CURRENT, build.revision
+    return _BEHIND, f"published archive differs from the installed one ({build.revision})"
+
+
+def _agents_update(args: argparse.Namespace) -> int:
+    """Report which installed agents are behind what is published, and refresh them.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        Process exit code; ``2`` if any update failed.
+    """
+    builds = agent_registry.installed()
+    if args.tag:
+        builds = [b for b in builds if str(b) == args.tag]
+        if not builds:
+            print(f"no agent installed for {args.tag}")
+            return 1
+    if not builds:
+        print("no agents installed")
+        return 1
+
+    print(f"checking {len(builds)} agent(s) against "
+          f"{agent_install.resolve_base_url(args.base_url)}")
+    behind, failed = [], []
+    for build in builds:
+        state, detail = _update_state(build, args.base_url)
+        print(f"  {str(build):38} {state:18} {detail}")
+        if state == _BEHIND:
+            behind.append(build)
+
+    if not behind:
+        print("nothing to update")
+        return 0
+    if args.check:
+        print(f"{len(behind)} agent(s) could be updated; re-run without --check to do it")
+        return 0
+
+    for build in behind:
+        tag = str(build)
+        try:
+            prefix = agent_install.install(tag, base_url=args.base_url)
+        except LiberaQtError as exc:
+            print(f"  {tag}: FAILED -- {exc}")
+            failed.append(tag)
+            continue
+        print(f"  {tag}: updated -> {prefix}")
+    return 2 if failed else 0
+
+
 def cmd_agents(args: argparse.Namespace) -> int:
     """List, install or remove agent binaries.
 
@@ -134,9 +220,19 @@ def cmd_agents(args: argparse.Namespace) -> int:
         if not builds:
             print("no agents installed")
             return 1
+        print(f"{'TAG':38} {'REVISION':18} ORIGIN")
         for b in builds:
-            print(f"{b}\t{b.library}")
+            manifest = b.manifest
+            origin = "local build"
+            if manifest.get("archive_sha256"):
+                origin = manifest.get("source", "archive")
+            elif not manifest:
+                origin = "unknown (predates manifests)"
+            print(f"{str(b):38} {b.revision:18} {origin}")
         return 0
+
+    if args.agents_command == "update":
+        return _agents_update(args)
 
     if args.agents_command == "install":
         tag = args.tag or (
@@ -596,6 +692,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="archive to install from, instead of looking under the base URL")
     pi.add_argument("--base-url",
                     help=f"where <tag>.zip lives (default ${agent_install.BASE_URL_ENV})")
+    pu = asub.add_parser("update", help="refresh installed agents from published builds")
+    pu.add_argument("--tag", help="only this build tag (default: every installed agent)")
+    pu.add_argument("--check", action="store_true",
+                    help="report what is behind without downloading anything")
+    pu.add_argument("--base-url",
+                    help=f"where <tag>.zip lives (default ${agent_install.BASE_URL_ENV}, "
+                         "else the public releases page)")
     asub.add_parser("kits", help="Qt kits on this machine an agent can be built from")
     pb = asub.add_parser("build", help="build an agent from an installed Qt kit")
     pb.add_argument("--qt", help="Qt minor version, e.g. 6.7")

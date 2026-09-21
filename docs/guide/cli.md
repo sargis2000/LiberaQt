@@ -50,10 +50,47 @@ liberaqt agents remove qt6.7-windows-x86_64-mingw
 | `--qt`, `--compiler` | build the tag from parts, using the current platform |
 | `--tag` | give the full tag instead |
 | `--from URL\|PATH` | install this archive, ignoring the base URL |
-| `--base-url URL` | where `<tag>.zip` lives; defaults to `$LIBERAQT_AGENT_BASE_URL` |
+| `--base-url URL` | where `<tag>.zip` lives; defaults to `$LIBERAQT_AGENT_BASE_URL`, else the public releases page |
 
 A published `<tag>.zip.sha256` is verified when present. The install is refused if the unpacked
 agent does not advertise its architecture's plugin key.
+
+With nothing configured, archives come from
+`https://github.com/sargis2000/LiberaQt/releases/latest/download`, where CI attaches one per ABI
+on every tagged release. Set `LIBERAQT_AGENT_BASE_URL` to host your own -- a vendor-specific
+agent need not leave your network.
+
+Not every ABI is published: Qt 5.15 msvc2015 and the arm64 kits have no runner to build them on.
+For those, `liberaqt agents build` from a local Qt kit, which the install error names.
+
+### update
+
+Keeps installed agents in step with what has been published -- the answer to "the agent was
+fixed and released; how do I get it?":
+
+```bash
+liberaqt agents update --check     # report only, downloads nothing
+liberaqt agents update             # refresh whatever is behind
+liberaqt agents update --tag qt6.5-windows-x86_64-mingw
+```
+
+```title="Output"
+checking 3 agent(s) against https://github.com/sargis2000/LiberaQt/releases/latest/download
+  qt6.5-windows-x86_64-mingw             update available   published archive differs from the installed one (a1b2c3d)
+  qt6.7-windows-x86_64-mingw             local build        built here at 443bf85-dirty; `liberaqt agents build` to refresh
+  qt5.15-windows-x86_64-msvc2015         cannot tell        nothing published for this ABI at that location
+```
+
+The comparison is against the 64-byte checksum published beside each archive, so checking every
+ABI you have installed costs almost nothing. Three states are deliberately *not* "behind":
+
+* **local build** -- you built it yourself, so there is nothing to compare against and it is
+  usually newer than a release. Left alone.
+* **cannot tell** -- either nothing is published for that ABI, or the install predates version
+  stamping and carries no manifest. Reinstall to get one.
+
+`liberaqt agents list` shows the same provenance as a table: tag, revision, and where each set
+of bits came from.
 
 ### kits
 

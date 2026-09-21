@@ -103,6 +103,41 @@ message(STATUS "liberaqt agent: plugin key ${LIBERAQT_PLUGIN_KEY}")
 
 configure_file(src/liberaqt_plugin.json.in
                "${CMAKE_CURRENT_BINARY_DIR}/liberaqt_plugin.json" @ONLY)
+
+# A manifest describing what this build *is*, installed beside the plugin.
+#
+# Without it an installed agent is an anonymous .dll: nothing on disk says which source it came
+# from, so "is my agent older than the fix I just pushed?" was unanswerable and `doctor` could
+# only detect the one historical case of a missing plugin key. `liberaqt agents update` compares
+# against this.
+#
+# The revision is resolved at *configure* time, so a bare `cmake --build` after new commits
+# keeps the old value. `liberaqt agents build` reconfigures every time, which is the path that
+# matters; re-run cmake if you are driving the build by hand.
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" describe --always --dirty --tags
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE LIBERAQT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+endif()
+if(NOT LIBERAQT_REVISION)
+  set(LIBERAQT_REVISION "unknown")
+endif()
+
+set(LIBERAQT_PROTOCOL_VERSION 1)
+set(LIBERAQT_QT_VERSION "${QT_VERSION}")
+if(LIBERAQT_HAVE_QUICK)
+  set(LIBERAQT_QUICK_JSON "true")
+else()
+  set(LIBERAQT_QUICK_JSON "false")
+endif()
+
+configure_file(src/liberaqt_agent.json.in
+               "${CMAKE_CURRENT_BINARY_DIR}/liberaqt-agent.json" @ONLY)
+message(STATUS "liberaqt agent: revision ${LIBERAQT_REVISION}")
 # moc resolves Q_PLUGIN_METADATA's FILE against the target's include directories, so the
 # generated metadata has to be reachable through one of them.
 target_include_directories(liberaqt PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
@@ -130,3 +165,6 @@ install(TARGETS liberaqt
 
 # Optional: the header-only embed shim for apps that link the agent themselves.
 install(FILES src/embed.h DESTINATION include/liberaqt)
+
+# The manifest goes at the prefix root, where agent_registry.py looks for it.
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/liberaqt-agent.json" DESTINATION .)
