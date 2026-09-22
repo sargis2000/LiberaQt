@@ -11,6 +11,9 @@ jobs:
     name: Python client (no Qt needed)
     runs-on: ubuntu-latest
     strategy:
+      # One Python's failure used to cancel the others, so a 3.9-only break hid whether 3.11 and
+      # 3.12 passed at all. Each version reports for itself.
+      fail-fast: false
       matrix:
         python: ["3.9", "3.11", "3.12"]
     steps:

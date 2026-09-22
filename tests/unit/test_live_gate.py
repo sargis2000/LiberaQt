@@ -90,21 +90,35 @@ def test_standing_inside_the_live_tree_is_not_consent(tree, cwd, args):
 # ------------------------------------------------------------------ exactly what was named
 
 
+# The next three pass `tests/` together with a path inside it, and pytest itself disagrees across
+# versions about what that collects: pytest 9 collects everything under `tests/`, while pytest 8
+# drops the broader argument and collects only the narrower one -- measured, `pytest tests/
+# tests/e2e/qt` gives 523 tests on 9 and 63 on 8. That is pytest's decision, not the gate's, so
+# these assert only on the live tests: the part the gate decides, and identical on both.
+LIVE = {"test_qt", "test_qt_other", "test_libero"}
+
+
 def test_naming_one_live_path_does_not_open_the_rest(tree):
     """`pytest tests/ tests/e2e/qt` asked for Qt, and used to get Libero too."""
     selected, _ = _selected(tree, "tests/", "tests/e2e/qt")
-    assert selected == {"test_unit", "test_qt", "test_qt_other"}
+    assert selected & LIVE == {"test_qt", "test_qt_other"}
 
 
 def test_a_node_id_that_matches_nothing_grants_nothing(tree):
     selected, _ = _selected(tree, "tests/", "tests/e2e/qt/test_q.py::no_such_test")
-    assert selected == {"test_unit"}
+    assert selected & LIVE == set()
 
 
 def test_a_node_id_does_not_cover_a_longer_name(tree):
     """`::test_qt` must not also select `test_qt_other`."""
     selected, _ = _selected(tree, "tests/", "tests/e2e/qt/test_q.py::test_qt")
-    assert selected == {"test_unit", "test_qt"}
+    assert selected & LIVE == {"test_qt"}
+
+
+def test_unit_tests_run_beside_one_named_live_path(tree):
+    """The same point with paths that do not overlap, which every pytest collects alike."""
+    selected, _ = _selected(tree, "tests/unit", "tests/e2e/qt")
+    assert selected == {"test_unit", "test_qt", "test_qt_other"}
 
 
 @pytest.mark.parametrize("args, expected", [
