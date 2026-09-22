@@ -59,6 +59,16 @@ jobs:
   # This is still a compile check, not a functional one: nothing here runs the agent. Two ABIs
   # deliberately have no leg -- Qt 5.15 msvc2015 (no runner ships that toolset) and anything
   # arm64 -- and `liberaqt agents install` names `agents build` as the way to get those.
+  #
+  # The names below were checked against aqtinstall 3.3.0 (`aqt list-qt`, `aqt list-tool`), after
+  # a first version guessed them and failed on every Qt 6 leg: Qt 6.7 on Linux is `linux_gcc_64`,
+  # not `gcc_64`, and Qt 6 has no separate `qtdeclarative` module -- it ships in the base.
+  #
+  # `publish: false` legs are compiled and never shipped. Qt 6.5 and 6.7 MinGW were built with
+  # GCC 11.2 (their mkspecs/qconfig.pri say so), and aqt offers no MinGW 11.2 -- only 8.1, 9.0 and
+  # 13.1. An agent built with 13.1 links a different libstdc++ than the application loads, which
+  # is exactly the substitution `liberaqt agents build` refuses. So CI compiles those with 13.1 to
+  # catch code errors, and the published Qt 6 MinGW agents come from a matching local build.
   agent:
     name: Agent ${{ matrix.tag }}
     runs-on: ${{ matrix.os }}
@@ -66,16 +76,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-22.04, qt: "5.15.2", arch: "gcc_64",           tag: "qt5.15-linux-x86_64-gcc" }
-          - { os: ubuntu-22.04, qt: "6.5.3",  arch: "gcc_64",           tag: "qt6.5-linux-x86_64-gcc" }
-          - { os: ubuntu-22.04, qt: "6.7.2",  arch: "gcc_64",           tag: "qt6.7-linux-x86_64-gcc" }
-          - { os: windows-2022, qt: "5.15.2", arch: "win64_msvc2019_64", tag: "qt5.15-windows-x86_64-msvc2019" }
-          - { os: windows-2022, qt: "5.15.2", arch: "win32_msvc2019",    tag: "qt5.15-windows-x86-msvc2019" }
-          - { os: windows-2022, qt: "5.15.2", arch: "win64_mingw81",     tag: "qt5.15-windows-x86_64-mingw",  mingw: "tools_mingw,qt.tools.win64_mingw810" }
-          - { os: windows-2022, qt: "6.5.3",  arch: "win64_msvc2019_64", tag: "qt6.5-windows-x86_64-msvc2019" }
-          - { os: windows-2022, qt: "6.5.3",  arch: "win64_mingw",       tag: "qt6.5-windows-x86_64-mingw",   mingw: "tools_mingw90" }
-          - { os: windows-2022, qt: "6.7.2",  arch: "win64_msvc2019_64", tag: "qt6.7-windows-x86_64-msvc2019" }
-          - { os: windows-2022, qt: "6.7.2",  arch: "win64_mingw",       tag: "qt6.7-windows-x86_64-mingw",   mingw: "tools_mingw1310" }
+          - { os: ubuntu-22.04, qt: "5.15.2", arch: "gcc_64",            tag: "qt5.15-linux-x86_64-gcc",        publish: true }
+          - { os: ubuntu-22.04, qt: "6.5.3",  arch: "gcc_64",            tag: "qt6.5-linux-x86_64-gcc",         publish: true }
+          - { os: ubuntu-22.04, qt: "6.7.2",  arch: "linux_gcc_64",      tag: "qt6.7-linux-x86_64-gcc",         publish: true }
+          - { os: windows-2022, qt: "5.15.2", arch: "win64_msvc2019_64", tag: "qt5.15-windows-x86_64-msvc2019", publish: true }
+          # The Visual Studio generator targets x64 unless told otherwise, and a 64-bit agent
+          # links against 32-bit Qt with nothing but unresolved __ptr64 symbols to show for it.
+          - { os: windows-2022, qt: "5.15.2", arch: "win32_msvc2019",    tag: "qt5.15-windows-x86-msvc2019",    publish: true, cmake_platform: "-A Win32" }
+          - { os: windows-2022, qt: "5.15.2", arch: "win64_mingw81",     tag: "qt5.15-windows-x86_64-mingw",    publish: true, mingw: "tools_mingw,qt.tools.win64_mingw810" }
+          - { os: windows-2022, qt: "6.5.3",  arch: "win64_msvc2019_64", tag: "qt6.5-windows-x86_64-msvc2019", publish: true }
+          - { os: windows-2022, qt: "6.5.3",  arch: "win64_mingw",       tag: "qt6.5-windows-x86_64-mingw",     publish: false, mingw: "tools_mingw1310,qt.tools.win64_mingw1310" }
+          - { os: windows-2022, qt: "6.7.2",  arch: "win64_msvc2019_64", tag: "qt6.7-windows-x86_64-msvc2019", publish: true }
+          - { os: windows-2022, qt: "6.7.2",  arch: "win64_mingw",       tag: "qt6.7-windows-x86_64-mingw",     publish: false, mingw: "tools_mingw1310,qt.tools.win64_mingw1310" }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,7 +98,6 @@ jobs:
         with:
           version: ${{ matrix.qt }}
           arch: ${{ matrix.arch }}
-          modules: ${{ startsWith(matrix.qt, '6') && 'qtdeclarative' || '' }}
           tools: ${{ matrix.mingw || '' }}
 
       - name: Build agent
@@ -101,7 +112,7 @@ jobs:
             export PATH="$mingw_bin:$PATH"
             generator="$generator -DCMAKE_CXX_COMPILER=$mingw_bin/g++.exe"
           fi
-          cmake -S agent -B build/agent $generator -DCMAKE_BUILD_TYPE=Release
+          cmake -S agent -B build/agent $generator ${{ matrix.cmake_platform || '' }} -DCMAKE_BUILD_TYPE=Release
           cmake --build build/agent --config Release --parallel
           cmake --install build/agent --prefix "${{ github.workspace }}/agents/${{ matrix.tag }}"
 
@@ -130,6 +141,7 @@ jobs:
           liberaqt agents list
 
       - uses: actions/upload-artifact@v4
+        if: matrix.publish
         with:
           name: agent-${{ matrix.tag }}
           path: dist/${{ matrix.tag }}.zip*

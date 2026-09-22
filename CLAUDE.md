@@ -497,8 +497,13 @@ Archives live at `<base>/<tag>.zip` with an optional `<tag>.zip.sha256`. The def
 a GitHub alias for the newest release, so the URL never needs bumping. `LIBERAQT_AGENT_BASE_URL`
 overrides it for an internal share, and `--from` overrides everything for a one-off.
 
-CI builds ten ABIs and packages each as that pair; pushing a `v*` tag runs the `publish` job,
-which attaches them to the release. So the answer to "I fixed the Qt 6.5 agent, how does everyone
+CI builds ten ABIs and packages eight as that pair; pushing a `v*` tag runs the `publish` job,
+which attaches them to the release. The two it compiles but never ships are Qt 6.5 and 6.7 MinGW:
+those kits were built with GCC 11.2 (their `mkspecs/qconfig.pri` says so) and aqt offers no MinGW
+11.2, only 8.1, 9.0 and 13.1 -- and an agent built with another GCC links a different libstdc++
+than the application loads. Their published agents come from a matching local build. The matrix's
+arch and tool names are checked against `aqt list-qt` / `aqt list-tool`; the first version
+guessed them and failed every Qt 6 leg. So the answer to "I fixed the Qt 6.5 agent, how does everyone
 else get it?" is: tag a release, and their `liberaqt agents update` picks it up.
 
 `liberaqt agents kits` lists the Qt kits on this machine an agent can be built from, and
