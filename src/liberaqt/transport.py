@@ -20,6 +20,39 @@ from typing import Any, Callable
 from .errors import ConnectionLostError, ProtocolError, TimeoutError, from_agent_error
 from .protocol import PROTOCOL_VERSION
 
+#: A string longer than this is replaced in the *recorded* history (never on the wire).
+ELIDE_OVER = 2048
+
+#: Likewise a list longer than this keeps only its first items. Without it a single
+#: ``to_records()`` on Qt Assistant's index -- 34,517 rows of short strings, which the string
+#: limit never touches -- held about a megabyte in every history slot it occupied.
+ELIDE_ITEMS = 50
+
+
+def _elide_large(value: Any) -> Any:
+    """A copy of a message with every oversized string replaced by its length.
+
+    A failure trace carried the screenshot a second time, as 126 KB of base64 inside the
+    ``screen.grab`` response, beside the PNG that was already written next to it. Only the copy
+    kept for diagnostics is trimmed; what is sent and received is untouched.
+
+    Args:
+        value: A decoded JSON value.
+
+    Returns:
+        The same structure, with long strings elided.
+    """
+    if isinstance(value, str):
+        return value if len(value) <= ELIDE_OVER else f"<{len(value)} chars elided>"
+    if isinstance(value, dict):
+        return {k: _elide_large(v) for k, v in value.items()}
+    if isinstance(value, list):
+        kept = [_elide_large(v) for v in value[:ELIDE_ITEMS]]
+        if len(value) > ELIDE_ITEMS:
+            kept.append(f"<{len(value) - ELIDE_ITEMS} more items elided>")
+        return kept
+    return value
+
 
 class _Pending:
     __slots__ = ("event", "response")
@@ -39,8 +72,13 @@ class Transport:
         self.token = token
         self.trace = trace
         self.hello: dict[str, Any] = {}
-        self.history: list[dict] = []       # last N messages, attached to failure reports
-        self.history_limit = 200
+        # Attached to failure reports. The first `history_head` messages are kept for good -- the
+        # handshake and whatever set up the state under test -- and the rest roll. A plain "last
+        # 200" was exactly one default-timeout retry loop (5 s / 50 ms x request+response), so a
+        # timeout failure evicted everything except 200 identical polls.
+        self.history: list[dict] = []
+        self.history_limit = 400
+        self.history_head = 50
 
         self._sock: socket.socket | None = None
         self._ids = itertools.count(1)
@@ -278,9 +316,19 @@ class Transport:
             pending.event.set()
 
     def _record(self, message: dict, outgoing: bool) -> None:
+        # The history is written to liberaqt-trace/ on failure, which CI uploads as an artifact,
+        # and --liberaqt-trace prints it. The per-launch token has no place in either: while an
+        # application is still running it is a credential for a remote-code-execution surface.
+        if "token" in message:
+            message = {**message, "token": "<redacted>"}
+        message = _elide_large(message)
         entry = {"dir": ">" if outgoing else "<", "t": time.time(), "msg": message}
         self.history.append(entry)
-        if len(self.history) > self.history_limit:
-            del self.history[: len(self.history) - self.history_limit]
+        excess = len(self.history) - self.history_limit
+        if excess > 0:
+            # Clamped, or a limit set below the head would never trim at all: the delete would
+            # start past the end of the list and the history would grow without bound.
+            head = min(self.history_head, self.history_limit // 4)
+            del self.history[head:head + excess]
         if self.trace:
             print(f"{entry['dir']} {json.dumps(message)[:400]}")

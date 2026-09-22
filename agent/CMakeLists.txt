@@ -101,6 +101,12 @@ set(LIBERAQT_PLUGIN_KEY
     "liberaqt_${CMAKE_MATCH_1}_${CMAKE_MATCH_2}_${LIBERAQT_ABI_BITS}_${LIBERAQT_ABI_COMPILER}")
 message(STATUS "liberaqt agent: plugin key ${LIBERAQT_PLUGIN_KEY}")
 
+# The same key, compiled in, so the hello banner reports the key Qt actually loaded this plugin
+# under. The banner used to rebuild it from pointer size alone -- "liberaqt_64" -- which is the
+# scheme per-ABI keys replaced, so every agent described itself wrongly. One variable feeds both
+# the plugin metadata and the banner, so they cannot drift apart again.
+target_compile_definitions(liberaqt PRIVATE LIBERAQT_PLUGIN_KEY="${LIBERAQT_PLUGIN_KEY}")
+
 configure_file(src/liberaqt_plugin.json.in
                "${CMAKE_CURRENT_BINARY_DIR}/liberaqt_plugin.json" @ONLY)
 

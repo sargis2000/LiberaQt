@@ -259,7 +259,11 @@ The same steps, if you would rather run them yourself or need a flag the command
 | Linux, macOS | `$XDG_CACHE_HOME/liberaqt/agents/`, else `~/.cache/liberaqt/agents/` |
 
 `LIBERAQT_AGENT_PATH` overrides the cache with a directory of `<tag>/` install prefixes, which is
-useful in CI.
+useful in CI. It is searched first, and `liberaqt agents update` never writes into it.
+
+`LIBERAQT_CACHE` moves the cache itself: set it and agents live in `$LIBERAQT_CACHE/agents/`
+instead. Point it at a throwaway directory to try an install or an update without touching the
+agents you already have.
 
 The tag format is `qt<minor>-<platform>-<arch>-<compiler>`, and the install layout **must** be:
 

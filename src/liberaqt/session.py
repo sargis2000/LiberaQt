@@ -139,8 +139,10 @@ class Session:
         built.
 
         Returns:
-            The capability map: ``commands``, ``quick``, ``abi``, ``abi_key``. Empty against an
-            agent built before capabilities were reported.
+            The capability map: ``commands``, ``quick``, ``abi`` (pointer size) and ``abi_key``
+            (the plugin key this build carries, e.g. ``"liberaqt_6_7_64_gnu"``). Empty against an
+            agent built before capabilities were reported. An agent built before the key was
+            compiled in reports the old pointer-size-only form, ``"liberaqt_64"``.
         """
         return dict(self.transport.hello.get("capabilities") or {})
 

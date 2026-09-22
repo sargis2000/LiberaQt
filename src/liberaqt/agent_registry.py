@@ -178,8 +178,22 @@ def plugin_key_for(qt: str, platform_tag: str, compiler: str) -> str:
     """
     arch = platform_tag.rsplit("-", 1)[-1].lower()
     bits = "64" if arch in _ABI64_ARCHES else "32"
-    family = next((f for prefix, f in _COMPILER_FAMILIES if compiler.startswith(prefix)), "gnu")
-    return f"liberaqt_{qt.replace('.', '_')}_{bits}_{family}"
+    return f"liberaqt_{qt.replace('.', '_')}_{bits}_{compiler_family(compiler)}"
+
+
+def compiler_family(compiler: str) -> str:
+    """The family a toolchain belongs to, which is what decides whether a plugin can load.
+
+    MSVC 2015, 2019 and 2022 are one family and binary compatible; MinGW and MSVC are not, since
+    they mangle C++ names differently and link different runtimes.
+
+    Args:
+        compiler: A toolchain name from a tag or a binary, e.g. ``"msvc2019"``, ``"mingw"``.
+
+    Returns:
+        ``"msvc"``, ``"gnu"`` or ``"clang"``.
+    """
+    return next((f for prefix, f in _COMPILER_FAMILIES if compiler.startswith(prefix)), "gnu")
 
 
 def abi_key_for(platform_tag: str) -> str:
@@ -533,11 +547,34 @@ def search_paths() -> list[Path]:
     return paths
 
 
+def build_for(tag: str, root: Path) -> AgentBuild:
+    """Describe the agent a tag names, at a given install prefix.
+
+    For checking bits that are not on the search path yet -- an install in progress has to
+    validate the binary it just unpacked, not whichever build with the same tag happens to come
+    first on ``LIBERAQT_AGENT_PATH``.
+
+    Args:
+        tag: A build tag such as ``"qt6.7-windows-x86_64-mingw"``.
+        root: The install prefix holding ``plugins/generic/``.
+
+    Returns:
+        The build, which may or may not exist on disk.
+    """
+    parts = tag.split("-")
+    qt = parts[0][2:] if parts[0].startswith("qt") else parts[0]
+    plat = "-".join(parts[1:3]) if len(parts) >= 3 else current_platform_tag()
+    compiler = parts[3] if len(parts) > 3 else "unknown"
+    return AgentBuild(qt=qt, platform_tag=plat, compiler=compiler, root=root)
+
+
 def installed() -> list[AgentBuild]:
     """Find every usable agent on the search path.
 
     Directories whose plugin binary is missing are skipped, so a half-finished install is
-    invisible rather than a confusing failure at launch time.
+    invisible rather than a confusing failure at launch time. A tag can appear more than once
+    when ``LIBERAQT_AGENT_PATH`` shadows the cache; the first occurrence is the one a launch
+    uses, and :func:`effective` returns only those.
 
     Returns:
         The agent builds found, in search-path order.
@@ -547,16 +584,59 @@ def installed() -> list[AgentBuild]:
         if not base.is_dir():
             continue
         for entry in sorted(base.iterdir()):
-            parts = entry.name.split("-")
-            if not entry.is_dir() or not parts[0].startswith("qt"):
+            if not entry.is_dir() or not entry.name.startswith("qt"):
                 continue
-            qt = parts[0][2:]
-            plat = "-".join(parts[1:3]) if len(parts) >= 3 else current_platform_tag()
-            compiler = parts[3] if len(parts) > 3 else "unknown"
-            build = AgentBuild(qt=qt, platform_tag=plat, compiler=compiler, root=entry)
+            build = build_for(entry.name, entry)
             if build.exists():
                 found.append(build)
     return found
+
+
+def effective() -> list[AgentBuild]:
+    """One build per tag: the one a launch would actually use.
+
+    Returns:
+        The first build for each tag in search-path order, so a directory on
+        ``LIBERAQT_AGENT_PATH`` wins over the cache copy it shadows.
+    """
+    seen: set[str] = set()
+    out: list[AgentBuild] = []
+    for build in installed():
+        if str(build) in seen:
+            continue
+        seen.add(str(build))
+        out.append(build)
+    return out
+
+
+def is_cached(build: AgentBuild) -> bool:
+    """Whether a build lives in the download cache, as opposed to a directory the user manages.
+
+    Args:
+        build: An installed build.
+
+    Returns:
+        True when its prefix is directly inside ``<cache>/agents``.
+    """
+    try:
+        return build.root.resolve().parent == (cache_dir() / "agents").resolve()
+    except OSError:
+        return False
+
+
+def _binary_toolchain(executable: str) -> str | None:
+    """The compiler the application's Qt was built with, or None when the binary does not say.
+
+    Args:
+        executable: Path to the application.
+
+    Returns:
+        A toolchain name such as ``"msvc"`` or ``"mingw"``, or None.
+    """
+    try:
+        return inspect_binary(executable).toolchain
+    except Exception:  # noqa: BLE001 - an unreadable binary just means no compiler preference
+        return None
 
 
 def resolve(executable: str, qt: str | None = None) -> AgentBuild:
@@ -575,7 +655,20 @@ def resolve(executable: str, qt: str | None = None) -> AgentBuild:
     """
     wanted_qt = qt or detect_qt_version(executable)
     tag = target_platform_tag(executable)
-    candidates = installed()
+    every = effective()
+    candidates = every
+
+    # Only an agent from the application's own compiler family can load into it. This used to
+    # match on Qt version and platform alone, so with both a MinGW and an MSVC agent for Qt 5.15
+    # x86 installed, Libero -- MSVC -- was handed the MinGW one, whichever sorted first. It still
+    # worked, but only because that load failed and Qt fell through to the next key on the list;
+    # `doctor` reported the wrong agent outright.
+    toolchain = _binary_toolchain(executable)
+    wrong_compiler: list[AgentBuild] = []
+    if toolchain:
+        family = compiler_family(toolchain)
+        wrong_compiler = [c for c in every if compiler_family(c.compiler) != family]
+        candidates = [c for c in every if compiler_family(c.compiler) == family]
 
     if wanted_qt:
         exact = [c for c in candidates if c.qt == wanted_qt and c.platform_tag == tag]
@@ -592,19 +685,25 @@ def resolve(executable: str, qt: str | None = None) -> AgentBuild:
         if near:
             return max(near, key=lambda c: _version_key(c.qt))
 
-    have = ", ".join(str(c) for c in candidates) or "none"
+    have = ", ".join(str(c) for c in every) or "none"
     if wanted_qt:
         too_new = [str(c) for c in candidates
                    if c.platform_tag == tag and _same_series(c.qt, wanted_qt)
                    and _version_key(c.qt) > _version_key(wanted_qt)]
     else:
         too_new = []
+    other_compiler = [str(c) for c in wrong_compiler
+                      if c.platform_tag == tag and (not wanted_qt or c.qt == wanted_qt)]
     raise AgentMismatchError(
-        f"no liberaqt agent for Qt {wanted_qt or 'unknown'} on {tag} (installed: {have})",
+        f"no liberaqt agent for Qt {wanted_qt or 'unknown'} on {tag}"
+        f"{f' built with {toolchain}' if toolchain else ''} (installed: {have})",
         hint=(
-            (f"{', '.join(too_new)} is built against a newer Qt than this application, and Qt "
-             f"refuses such a plugin without a word. Build one for {wanted_qt} instead.\n"
-             if too_new else "")
+            (f"{', '.join(other_compiler)} is for the right Qt but another compiler, and a plugin "
+             f"cannot load into an application built with a different one. Build one with "
+             f"{toolchain}: liberaqt agents kits lists the kits.\n" if other_compiler else "")
+            + (f"{', '.join(too_new)} is built against a newer Qt than this application, and Qt "
+               f"refuses such a plugin without a word. Build one for {wanted_qt} instead.\n"
+               if too_new else "")
             + f"liberaqt agents install --qt {wanted_qt or '6.7'}\n"
             "  or build one:  cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR "
             "&& cmake --build build/agent && cmake --install build/agent --prefix "

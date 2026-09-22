@@ -24,6 +24,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import urllib.error
@@ -71,16 +72,30 @@ def published_digest(tag: str, base_url: str | None = None) -> str:
         base_url: Where ``<tag>.zip.sha256`` lives.
 
     Returns:
-        The hex digest in lower case, or ``""`` if it could not be fetched.
+        The hex digest in lower case, or ``""`` when nothing is published for this tag.
+
+    Raises:
+        AgentInstallError: The location could not be reached, or answered with something that is
+            not a checksum. Neither is the same as "not published", and the caller has to be able
+            to tell.
     """
     source = f"{resolve_base_url(base_url)}/{archive_name(tag)}.sha256"
     try:
         text = _read(source).decode("utf-8", "replace")
-    except AgentInstallError:
+    except NotPublishedError:
         return ""
-    # Accept a bare digest and the "<digest>  <name>" shasum format alike.
+    # Accept a bare digest and the "<digest>  <name>" / "<digest> *<name>" shasum formats alike.
     parts = text.strip().split()
-    return parts[0].lower() if parts else ""
+    digest = parts[0].lower() if parts else ""
+    if not _DIGEST.match(digest):
+        # An HTML error page served with a 200, or a truncated upload. Comparing its first word
+        # against a real digest reported "update available" forever.
+        raise AgentInstallError(
+            f"{source} is not a sha256 checksum",
+            hint=f"It starts {text.strip()[:40]!r}. The release is half-published or mis-served.",
+        )
+    return digest
+
 
 #: Files an agent archive must contain, relative to its root, for the install to be usable.
 REQUIRED_MEMBER = "plugins/generic"
@@ -90,6 +105,52 @@ class AgentInstallError(LiberaQtError):
     """An agent archive could not be fetched, verified, or unpacked."""
 
     retryable = False
+
+
+class NotPublishedError(AgentInstallError):
+    """The location answered, and there is nothing there: a 404, or a missing local file.
+
+    Kept distinct from every other fetch failure because the two mean opposite things to
+    ``agents update``. "Nothing published for this ABI" is a settled answer; "could not reach the
+    releases page" is not an answer at all, and reporting the one as the other told a user with no
+    network that their ABI had never been built.
+    """
+
+
+#: What a build tag may look like: ``qt<major>.<minor>-<platform>-<arch>-<compiler>``.
+#:
+#: The tag becomes a directory name under the cache, so it is remote-influenced input as far as
+#: the filesystem is concerned -- ``--tag ../../x`` used to unpack outside the cache entirely.
+_TAG = re.compile(r"^qt\d+\.\d+-[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_-]+$")
+
+#: A SHA-256 digest, as published beside an archive.
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+
+def install_prefix(tag: str) -> Path:
+    """The cache directory a tag installs into, after checking the tag is safe to use as one.
+
+    Args:
+        tag: A build tag.
+
+    Returns:
+        ``<cache>/agents/<tag>``.
+
+    Raises:
+        AgentInstallError: The tag is not tag-shaped, or would resolve outside the cache.
+    """
+    agents = agent_registry.cache_dir() / "agents"
+    if not _TAG.match(tag) or ".." in tag:
+        raise AgentInstallError(
+            f"{tag!r} is not a build tag",
+            hint="A tag looks like qt6.7-windows-x86_64-mingw; `liberaqt agents kits` lists them.",
+        )
+    prefix = agents / tag
+    # Belt and braces: the pattern already rules out separators, but the containment check is
+    # the property that actually matters, so assert it directly.
+    if prefix.resolve().parent != agents.resolve():
+        raise AgentInstallError(f"{tag!r} would install outside {agents}")
+    return prefix
 
 
 def archive_name(tag: str) -> str:
@@ -121,10 +182,16 @@ def _read(location: str) -> bytes:
         try:
             with urllib.request.urlopen(location, timeout=60) as response:  # noqa: S310
                 return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise NotPublishedError(f"nothing published at {location}") from exc
+            raise AgentInstallError(f"could not fetch {location}: {exc}") from exc
         except (urllib.error.URLError, OSError) as exc:
             raise AgentInstallError(f"could not fetch {location}: {exc}") from exc
     try:
         return Path(location).read_bytes()
+    except FileNotFoundError as exc:
+        raise NotPublishedError(f"could not read {location}: nothing is there") from exc
     except OSError as exc:
         raise AgentInstallError(f"could not read {location}: {exc}") from exc
 
@@ -141,6 +208,14 @@ def _verify_checksum(data: bytes, expected: str, source: str) -> None:
         AgentInstallError: The digest does not match.
     """
     wanted = expected.split()[0].strip().lower()
+    if not _DIGEST.match(wanted):
+        # Otherwise an HTML error page served with a 200 reads as "the download is corrupt",
+        # which sends the reader after the archive when it is the checksum that is broken.
+        raise AgentInstallError(
+            f"{source}.sha256 is not a sha256 checksum",
+            hint=f"It starts {expected.strip()[:40]!r}. The release is half-published or "
+                 "mis-served; the archive itself may be fine.",
+        )
     actual = hashlib.sha256(data).hexdigest()
     if actual != wanted:
         raise AgentInstallError(
@@ -149,49 +224,48 @@ def _verify_checksum(data: bytes, expected: str, source: str) -> None:
         )
 
 
-def _unpack(data: bytes, prefix: Path) -> None:
-    """Unpack an agent archive into its install prefix.
+def _unpack(data: bytes, staging: Path) -> Path:
+    """Unpack an agent archive into a staging directory, and find the prefix inside it.
+
+    Deliberately touches nothing but ``staging``. It used to remove the live install prefix and
+    move the new bits onto it *before* ``install`` had checked them, so a refused reinstall
+    replaced a working agent with the refused one -- and ``doctor`` then vouched for it.
 
     Members are checked for path traversal before anything is written: an archive is remote input,
     and ``..`` in a member name would otherwise write outside the prefix.
 
     Args:
         data: Archive bytes.
-        prefix: Install prefix to create.
+        staging: An empty directory to extract into.
+
+    Returns:
+        The directory within ``staging`` that holds ``plugins/generic/``.
 
     Raises:
         AgentInstallError: The archive is malformed or has an unsafe member.
     """
-    staging = Path(tempfile.mkdtemp(prefix="liberaqt-install-"))
     try:
-        try:
-            with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                for member in archive.namelist():
-                    target = (staging / member).resolve()
-                    if not str(target).startswith(str(staging.resolve())):
-                        raise AgentInstallError(f"unsafe path in archive: {member!r}")
-                archive.extractall(staging)
-        except zipfile.BadZipFile as exc:
-            raise AgentInstallError(f"not a readable zip archive: {exc}") from exc
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            for member in archive.namelist():
+                target = (staging / member).resolve()
+                if not str(target).startswith(str(staging.resolve())):
+                    raise AgentInstallError(f"unsafe path in archive: {member!r}")
+            archive.extractall(staging)
+    except zipfile.BadZipFile as exc:
+        raise AgentInstallError(f"not a readable zip archive: {exc}") from exc
 
-        # Tolerate an archive that wraps everything in one top-level directory, which is what
-        # most release tooling produces.
-        root = staging
-        entries = list(staging.iterdir())
-        if len(entries) == 1 and entries[0].is_dir() and not (staging / "plugins").exists():
-            root = entries[0]
-        if not (root / REQUIRED_MEMBER).is_dir():
-            raise AgentInstallError(
-                f"archive has no {REQUIRED_MEMBER}/ directory",
-                hint="An agent install prefix must contain plugins/generic/liberaqt.{dll,so}.",
-            )
-
-        if prefix.exists():
-            shutil.rmtree(prefix)
-        prefix.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(root), str(prefix))
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+    # Tolerate an archive that wraps everything in one top-level directory, which is what most
+    # release tooling produces.
+    root = staging
+    entries = list(staging.iterdir())
+    if len(entries) == 1 and entries[0].is_dir() and not (staging / "plugins").exists():
+        root = entries[0]
+    if not (root / REQUIRED_MEMBER).is_dir():
+        raise AgentInstallError(
+            f"archive has no {REQUIRED_MEMBER}/ directory",
+            hint="An agent install prefix must contain plugins/generic/liberaqt.{dll,so}.",
+        )
+    return root
 
 
 def _stamp_manifest(prefix: Path, source: str, digest: str) -> None:
@@ -243,6 +317,7 @@ def install(tag: str, source: str | None = None, base_url: str | None = None) ->
         AgentInstallError: Nothing to fetch from, the download failed its checksum, the archive
             was malformed, or what it unpacked to is not a working agent.
     """
+    prefix = install_prefix(tag)
     if source is None:
         source = f"{resolve_base_url(base_url)}/{archive_name(tag)}"
 
@@ -270,26 +345,63 @@ def install(tag: str, source: str | None = None, base_url: str | None = None) ->
     if digest.strip():
         _verify_checksum(data, digest, source)
 
-    prefix = agent_registry.cache_dir() / "agents" / tag
-    _unpack(data, prefix)
+    # Unpacked beside the live prefix, under a dotted name the registry skips, so nothing ever
+    # sees a half-installed agent and the final swap is a rename on one filesystem.
+    agents_dir = prefix.parent
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".liberaqt-install-", dir=agents_dir))
+    try:
+        root = _unpack(data, staging)
 
-    build = next((b for b in agent_registry.installed() if str(b) == tag), None)
-    if build is None or not build.exists():
-        raise AgentInstallError(
-            f"{tag} unpacked into {prefix} but no plugin binary is there",
-            hint="The archive does not match the tag it is named for.",
-        )
-    # Record where these bits came from, so a later `agents update` can tell whether the
-    # published archive has moved on, by fetching 64 bytes rather than the whole thing.
-    _stamp_manifest(prefix, source, hashlib.sha256(data).hexdigest())
+        # Check *these* bits. Looking the tag up with installed() found whichever build came
+        # first on the search path -- a copy on LIBERAQT_AGENT_PATH, not the one just unpacked.
+        build = agent_registry.build_for(tag, root)
+        if not build.exists():
+            raise AgentInstallError(
+                f"the archive for {tag} has no {build.library.name}",
+                hint="The archive does not match the tag it is named for.",
+            )
+        if not build.advertises_abi_key():
+            raise AgentInstallError(
+                f"the archive for {tag} does not carry the {build.abi_key} plugin key",
+                hint=(
+                    "It is built for a different ABI than its name says, predates per-ABI plugin "
+                    "keys, or is damaged. Whichever it is, it would load into nothing -- Qt binds "
+                    "a plugin key to one library -- so it was not installed, and anything already "
+                    "installed under this tag is untouched."
+                ),
+            )
+        _check_manifest_agrees(build, tag)
 
-    if not build.advertises_abi_key():
-        raise AgentInstallError(
-            f"{tag} does not advertise the {build.abi_key} plugin key",
-            hint=(
-                "It predates per-ABI plugin keys. Such an agent takes the plugin key from a child "
-                "process of another architecture and leaves it with no agent and no error. "
-                "Rebuild it from a current source tree."
-            ),
-        )
+        # Only now, with the bits accepted: record where they came from, so a later `agents
+        # update` can tell whether the release moved by fetching 64 bytes, not the archive.
+        _stamp_manifest(root, source, hashlib.sha256(data).hexdigest())
+
+        if prefix.exists():
+            shutil.rmtree(prefix)
+        shutil.move(str(root), str(prefix))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return prefix
+
+
+def _check_manifest_agrees(build: agent_registry.AgentBuild, tag: str) -> None:
+    """Refuse an archive whose own manifest names a different ABI than its tag.
+
+    The binary has already been checked for the right plugin key, so a disagreement here means a
+    mislabelled release: the bits load, but ``agents list`` would repeat the wrong Qt version or
+    key back to anyone asking what is installed.
+
+    Args:
+        build: The staged build, whose binary already passed the plugin-key check.
+        tag: The tag it is being installed as.
+
+    Raises:
+        AgentInstallError: The manifest's plugin key contradicts the tag.
+    """
+    claimed = build.manifest.get("plugin_key")
+    if claimed and claimed != build.abi_key:
+        raise AgentInstallError(
+            f"the archive for {tag} carries a manifest for {claimed}, not {build.abi_key}",
+            hint="The release is mislabelled. Report it rather than installing it.",
+        )

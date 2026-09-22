@@ -7,8 +7,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import textwrap
@@ -54,7 +56,8 @@ def _report_target(exe: str) -> bool:
         described += f", {report.arch}"
     print(f"  detected Qt: {described} ({report.linkage} linkage)")
     if report.arch and report.arch != agent_registry.current_platform_tag().split("-")[-1]:
-        print(_wrap(f"This is a {report.arch} binary on a "
+        # "an": x86, x86_64 and arm64 all start with a vowel sound.
+        print(_wrap(f"This is an {report.arch} binary on an "
                     f"{agent_registry.current_platform_tag().split('-')[-1]} host, so the agent "
                     f"must be built for {report.arch} too."))
 
@@ -123,8 +126,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 #: What `agents update` decided about one installed build.
 _CURRENT = "current"
 _BEHIND = "update available"
+_DAMAGED = "damaged"
+_DAMAGED_LOCAL = "damaged (local)"
 _LOCAL = "local build"
+_MANAGED = "not managed"
 _UNKNOWN = "cannot tell"
+_UNREACHABLE = "could not check"
+
+#: States `update` acts on. Damaged bits are refreshed along with outdated ones: the archive
+#: they came from is known, and re-fetching it is exactly the repair.
+_ACTIONABLE = (_BEHIND, _DAMAGED)
 
 
 def _update_state(build, base_url: str | None) -> tuple[str, str]:
@@ -136,22 +147,47 @@ def _update_state(build, base_url: str | None) -> tuple[str, str]:
     it is usually *newer*, not older.
 
     Args:
-        build: The installed :class:`~liberaqt.agent_registry.AgentBuild`.
+        build: The installed :class:`~liberaqt.agent_registry.AgentBuild`, which must be the one
+            a launch would use (see :func:`~liberaqt.agent_registry.effective`).
         base_url: Where archives live, or None for the configured default.
 
     Returns:
         ``(state, detail)``.
     """
+    # Never touch a directory the user manages. update used to read state from a build on
+    # LIBERAQT_AGENT_PATH and then write to the cache, which that very directory shadows -- so
+    # it reported "updated" on every run and never converged.
+    if not agent_registry.is_cached(build):
+        return _MANAGED, f"lives in {build.root.parent}, outside the cache; left as it is"
+
     manifest = build.manifest
     if not manifest:
-        return _UNKNOWN, "no manifest; predates version stamping -- reinstall to get one"
+        # Name the command, as every other branch does. "Reinstall" was the wrong word for most
+        # of these anyway: an agent that predates manifests was usually built here, not installed.
+        return _UNKNOWN, (f"no manifest; predates version stamping -- "
+                          f"`liberaqt agents build --tag {build}` to stamp one")
+
     # Lower-cased on both sides: published_digest normalises what it fetches, but the manifest
     # may have been written by something else, and a case difference is not an update.
     installed_digest = str(manifest.get("archive_sha256") or "").lower()
+
+    # The bits on disk, not the record of where they came from. Comparing only the recorded
+    # archive checksum answered "has the release moved?" and never "are these bits intact?", so
+    # a truncated or patched binary reported "current".
+    if not build.advertises_abi_key():
+        if not installed_digest:
+            # Someone's own build: say so, but still never overwrite it with a release.
+            return _DAMAGED_LOCAL, (f"the binary lacks its {build.abi_key} plugin key -- "
+                                    f"`liberaqt agents build --tag {build}` to rebuild it")
+        return _DAMAGED, f"the binary lacks its {build.abi_key} plugin key -- reinstalling fixes it"
+
     if not installed_digest:
         return _LOCAL, f"built here at {build.revision}; `liberaqt agents build` to refresh"
 
-    published = agent_install.published_digest(str(build), base_url=base_url)
+    try:
+        published = agent_install.published_digest(str(build), base_url=base_url)
+    except LiberaQtError as exc:
+        return _UNREACHABLE, str(exc).splitlines()[0]
     if not published:
         return _UNKNOWN, "nothing published for this ABI at that location"
     if published == installed_digest:
@@ -166,9 +202,13 @@ def _agents_update(args: argparse.Namespace) -> int:
         args: Parsed arguments.
 
     Returns:
-        Process exit code; ``2`` if any update failed.
+        Process exit code: ``0`` when nothing needs doing (or everything was done), ``1`` from
+        ``--check`` when something does -- the ``ruff format --check`` convention, so a CI step
+        can gate on it -- and ``2`` if any update failed.
     """
-    builds = agent_registry.installed()
+    # One build per tag, the one a launch would actually use. installed() lists a tag once per
+    # directory it appears in, which is how update came to act on two copies of one agent.
+    builds = agent_registry.effective()
     if args.tag:
         builds = [b for b in builds if str(b) == args.tag]
         if not builds:
@@ -184,7 +224,7 @@ def _agents_update(args: argparse.Namespace) -> int:
     for build in builds:
         state, detail = _update_state(build, args.base_url)
         print(f"  {str(build):38} {state:18} {detail}")
-        if state == _BEHIND:
+        if state in _ACTIONABLE:
             behind.append(build)
 
     if not behind:
@@ -192,7 +232,7 @@ def _agents_update(args: argparse.Namespace) -> int:
         return 0
     if args.check:
         print(f"{len(behind)} agent(s) could be updated; re-run without --check to do it")
-        return 0
+        return 1
 
     for build in behind:
         tag = str(build)
@@ -220,6 +260,9 @@ def cmd_agents(args: argparse.Namespace) -> int:
         if not builds:
             print("no agents installed")
             return 1
+        # By location, not identity: effective() lists afresh, so comparing id()s matched nothing
+        # and marked every agent on the machine "shadowed".
+        in_use = {b.root.resolve() for b in agent_registry.effective()}
         print(f"{'TAG':38} {'REVISION':18} ORIGIN")
         for b in builds:
             manifest = b.manifest
@@ -228,6 +271,11 @@ def cmd_agents(args: argparse.Namespace) -> int:
                 origin = manifest.get("source", "archive")
             elif not manifest:
                 origin = "unknown (predates manifests)"
+            if not agent_registry.is_cached(b):
+                origin += f"  [{b.root.parent}]"
+            # A tag listed twice with no word on which copy wins is its own small defect.
+            if b.root.resolve() not in in_use:
+                origin += "  (shadowed -- not used)"
             print(f"{str(b):38} {b.revision:18} {origin}")
         return 0
 
@@ -365,7 +413,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 #: The source checkout this module was loaded from, if it was loaded from one.
 #:
 #: ``src/liberaqt/cli.py`` -> the repository root. From a wheel this lands somewhere harmless
-#: (the parent of site-packages), which simply never holds an mkdocs.yml.
+#: (the parent of site-packages), which is never a LiberaQT checkout.
 #:
 #: Named rather than inlined so a test can monkeypatch it. Inlined, a test of the search order
 #: passes under a wheel install and fails under an editable one, because there ``parents[2]``
@@ -378,92 +426,186 @@ CHECKOUT_DOCS = Path(__file__).resolve().parents[2]
 #: never saw the repository can still serve and build the real documentation.
 PACKAGED_DOCS = Path(__file__).resolve().parent / "_docs"
 
+#: Written into every site ``liberaqt docs build`` produces, and the only thing that makes a
+#: directory ours to erase or to serve as LiberaQT's.
+#:
+#: The first version decided by file names instead -- any folder holding a ``404.html`` or a
+#: ``sitemap.xml`` -- and mkdocs then erased everything else in it. Hidden, so mkdocs' own clean
+#: step (which skips dotfiles) leaves it in place for the next build to find.
+SITE_STAMP = ".liberaqt-docs-build"
+
+#: What the ``docs`` extra provides, as ``{distribution: module to import}``. Checking mkdocs
+#: alone let a machine with plain mkdocs get as far as a raw "Unrecognised theme name" error.
+_DOCS_MODULES = {
+    "mkdocs": "mkdocs",
+    "mkdocs-material": "material",
+    "mkdocstrings": "mkdocstrings",
+    "mkdocstrings-python": "mkdocstrings_handlers.python",
+}
+
+
+def is_checkout(path: Path) -> bool:
+    """Whether a directory is a LiberaQT source checkout, as opposed to any mkdocs project.
+
+    Args:
+        path: A candidate directory.
+
+    Returns:
+        True when it holds both ``mkdocs.yml`` and ``src/liberaqt/``.
+    """
+    return (path / "mkdocs.yml").is_file() and (path / "src" / "liberaqt" / "__init__.py").is_file()
+
 
 def docs_root(explicit: str | None = None) -> Path:
     """Locate the documentation source: the directory holding ``mkdocs.yml``.
 
-    Searched in order: a directory given on the command line, the working directory, the source
-    checkout this module lives in, and the copy packaged into the wheel. A checkout is preferred
-    over the packaged copy, so editing ``docs/`` and serving them stays one step.
+    Searched in order: a directory given on the command line, the nearest LiberaQT checkout at or
+    above the working directory, the checkout this module lives in, and the copy packaged into
+    the wheel. A checkout is preferred over the packaged copy, so editing ``docs/`` and serving
+    them stays one step.
+
+    Only a LiberaQT checkout is found by searching. Any ``mkdocs.yml`` used to count, so a user's
+    own documentation was served, and built, under LiberaQT's name; and from inside a checkout's
+    ``docs/`` the checkout itself was missed, which built a site into the documentation sources.
 
     Args:
-        explicit: A directory given on the command line, which wins.
+        explicit: A directory given on the command line, which wins and may be any mkdocs project.
 
     Returns:
-        The directory containing ``mkdocs.yml``.
+        The directory containing ``mkdocs.yml``, resolved.
 
     Raises:
         LiberaQtError: It could not be found anywhere, which means this is neither a checkout
-            nor a complete install.
+            nor a complete install; or the explicit directory is unusable.
     """
     if explicit:
-        candidate = Path(explicit)
-        if (candidate / "mkdocs.yml").is_file():
-            return candidate
-        raise LiberaQtError(f"{candidate} has no mkdocs.yml")
+        candidate = Path(explicit).resolve()
+        if candidate.is_file():
+            raise LiberaQtError(
+                f"{candidate} is a file; --source takes the directory that holds mkdocs.yml")
+        if not candidate.is_dir():
+            raise LiberaQtError(f"{candidate} does not exist")
+        if not (candidate / "mkdocs.yml").is_file():
+            raise LiberaQtError(f"{candidate} has no mkdocs.yml")
+        return candidate
 
-    for base in (Path.cwd(), CHECKOUT_DOCS, PACKAGED_DOCS):
-        if (base / "mkdocs.yml").is_file():
+    here = Path.cwd().resolve()
+    for base in (here, *here.parents):
+        if is_checkout(base):
             return base
+    if is_checkout(CHECKOUT_DOCS):
+        return CHECKOUT_DOCS
+    if (PACKAGED_DOCS / "mkdocs.yml").is_file():
+        return PACKAGED_DOCS
     raise LiberaQtError(
-        "could not find mkdocs.yml",
+        "could not find the documentation sources",
         hint=f"Pass --source <dir>, or run from a source checkout. A wheel carries its own copy "
              f"at {PACKAGED_DOCS}; this install has none, so it is incomplete.",
     )
 
 
-#: Files mkdocs leaves in every site it builds. Their presence means the directory is a build
-#: output rather than something of the user's that happens to be called ``site``.
-_MKDOCS_BUILD_MARKERS = ("404.html", "sitemap.xml")
+def _is_ours(site: Path, root: Path) -> bool:
+    """Whether a built site is one this command made: stamped, or a checkout's own ``site/``.
+
+    A checkout's ``site/`` is the gitignored output its own mkdocs.yml names, so it is ours by
+    construction -- and trusting it keeps a build from before the stamp existed usable.
+    """
+    return (site / SITE_STAMP).is_file() or (is_checkout(root) and site == root / "site")
 
 
-def check_site_dir_is_disposable(site_dir: Path, explicit: bool) -> None:
-    """Refuse to hand mkdocs a directory it would erase and the user would miss.
+def check_site_dir_is_disposable(site_dir: Path, force: bool = False) -> None:
+    """Refuse to hand mkdocs a directory it would erase and someone would miss.
 
-    ``mkdocs build`` cleans its destination unconditionally. For a packaged install the default
-    destination is ``./site`` in whatever directory the caller happens to be standing in, which
-    is theirs and not ours -- so a ``site/`` holding anything other than a previous build is
-    treated as a refusal, not a target.
+    ``mkdocs build`` cleans its destination unconditionally, keeping only dotfiles. So the
+    destination must be empty, or a site this command built -- which carries :data:`SITE_STAMP`.
+    Naming it with ``--site-dir`` is not consent: ``--site-dir .`` in a project directory used to
+    erase every visible file in it, exit 0. ``--force`` is consent, for a directory whose
+    contents really are disposable -- but never for a filesystem root, the home directory, or
+    anything above the working directory, which no build is ever meant to replace.
 
-    Naming ``--site-dir`` is consent, and skips the check.
+    A link is judged by what it points at, and named by it too: through a junction, the files
+    erased used to live outside the working tree entirely, while the message named only the link.
 
     Args:
-        site_dir: Where the build would be written.
-        explicit: Whether the caller named it with ``--site-dir``.
+        site_dir: Where the build would be written, as given (not yet resolved).
+        force: The caller passed ``--force``.
 
     Raises:
-        LiberaQtError: The directory holds something that is not a previous mkdocs build.
+        LiberaQtError: The directory is not safe to erase.
     """
-    if explicit or not site_dir.is_dir():
+    given = Path(site_dir).absolute()
+    target = given.resolve()
+    shown = str(target) if os.path.normcase(str(target)) == os.path.normcase(str(given)) \
+        else f"{given} (a link to {target})"
+
+    cwd = Path.cwd().resolve()
+    if target == Path(target.anchor) or target == Path.home().resolve() or target in cwd.parents:
+        raise LiberaQtError(
+            f"refusing to build into {shown}: mkdocs erases its destination first",
+            hint="Choose an empty directory with --site-dir <dir>. --force does not apply here.",
+        )
+    if not target.exists():
+        if os.path.lexists(given):
+            raise LiberaQtError(f"{shown} is a link to something that does not exist")
         return
-    contents = list(site_dir.iterdir())
-    if not contents:
-        return
-    if any((site_dir / marker).is_file() for marker in _MKDOCS_BUILD_MARKERS):
+    if not target.is_dir():
+        raise LiberaQtError(f"{shown} is a file, not a directory",
+                            hint="Choose another destination with --site-dir <dir>.")
+    visible = [entry for entry in target.iterdir() if not entry.name.startswith(".")]
+    if not visible or (target / SITE_STAMP).is_file() or force:
         return
     raise LiberaQtError(
-        f"{site_dir} is not empty and does not look like a previous documentation build",
-        hint="mkdocs erases its destination. Move that directory aside, or choose another with "
-             "--site-dir <dir>.",
+        f"{shown} holds files that no documentation build put there",
+        hint="mkdocs erases its destination. Move them aside, choose an empty directory with "
+             "--site-dir <dir>, or pass --force if replacing them is really what you want.",
     )
 
 
-def _docs_extra_hint(root: Path) -> str:
-    """How to install the ``docs`` extra, phrased for how this install actually happened.
+def _docs_requirements() -> list[str]:
+    """The ``docs`` extra's requirements, read from the installed metadata when possible."""
+    try:
+        from importlib.metadata import requires
 
-    There is no PyPI release, so ``pip install "liberaqt[docs]"`` resolves to nothing. A checkout
-    installs from itself; anything else has to name the repository.
+        declared = requires("liberaqt") or []
+    except Exception:  # noqa: BLE001 - metadata is a convenience; the fallback is always right
+        declared = []
+    extra = []
+    for requirement in declared:
+        spec, _, marker = requirement.partition(";")
+        if "extra" in marker and '"docs"' in marker.replace("'", '"'):
+            extra.append(spec.strip())
+    return extra or ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
 
-    Args:
-        root: The documentation root in play.
+
+def _docs_extra_hint() -> str:
+    """A command that installs what the ``docs`` extra provides, and runs as printed.
+
+    Built from the running interpreter and the requirements themselves. The earlier hints asked
+    pip for ``liberaqt[docs]``: from a wheel that re-cloned the repository -- impossible offline,
+    and it replaced a pinned version with ``main`` -- and ``pip install -e ".[docs]"`` from
+    anywhere but a checkout's root installed the user's own project instead. A bare ``pip`` could
+    reach a different Python entirely.
 
     Returns:
-        A command the reader can paste.
+        A pasteable command.
     """
-    if root == PACKAGED_DOCS:
-        return ('pip install "liberaqt[docs] @ '
-                'git+https://github.com/sargis2000/LiberaQt.git"')
-    return 'pip install -e ".[docs]"'
+    exe = sys.executable
+    shown = f'"{exe}"' if " " in exe else exe
+    packages = " ".join(f'"{requirement}"' for requirement in _docs_requirements())
+    return f"{shown} -m pip install {packages}   (the [docs] extra)"
+
+
+def _missing_docs_modules() -> list[str]:
+    """Distributions of the ``docs`` extra that cannot be imported here."""
+    missing = []
+    for distribution, module in _DOCS_MODULES.items():
+        try:
+            found = importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(distribution)
+    return missing
 
 
 def docs_command(root: Path, host: str, port: int, build: bool = False,
@@ -471,8 +613,8 @@ def docs_command(root: Path, host: str, port: int, build: bool = False,
     """Work out how to serve or build the documentation, and say which way it went.
 
     Prefers mkdocs, which rebuilds a page as you edit it. Falls back to serving an already-built
-    ``site/`` over :mod:`http.server`, so the command still does something useful on a machine
-    without the ``docs`` extra installed.
+    site over :mod:`http.server` -- but only one this command built, so a stranger's ``./site``
+    is not served under LiberaQT's name.
 
     ``site_dir`` exists because ``root`` is not necessarily the caller's to write to: ``site_dir:``
     in mkdocs.yml is resolved against the config file, so a packaged install would otherwise build
@@ -490,9 +632,10 @@ def docs_command(root: Path, host: str, port: int, build: bool = False,
         ``(argv, description)``.
 
     Raises:
-        LiberaQtError: Neither mkdocs nor a built site is available.
+        LiberaQtError: Neither the ``docs`` extra nor a site of ours is available.
     """
-    if importlib.util.find_spec("mkdocs") is not None:
+    missing = _missing_docs_modules()
+    if not missing:
         if build:
             argv = [sys.executable, "-m", "mkdocs", "build", "--strict"]
             if site_dir is not None:
@@ -502,28 +645,34 @@ def docs_command(root: Path, host: str, port: int, build: bool = False,
 
     if build:
         raise LiberaQtError(
-            "building the documentation needs mkdocs",
-            hint=_docs_extra_hint(root),
+            f"building the documentation needs {', '.join(missing)}",
+            hint=_docs_extra_hint(),
         )
 
-    # The site `build` was told to write comes first: from a wheel, `root / "site"` is inside
-    # site-packages and can never exist.
     candidates = [site_dir] if site_dir is not None else []
     candidates.append(root / "site")
     for site in candidates:
-        if (site / "index.html").is_file():
+        if (site / "index.html").is_file() and _is_ours(site, root):
             return ([sys.executable, "-m", "http.server", str(port),
                      "--bind", host, "--directory", str(site)],
                     "http.server on the last built site (no live reload)")
 
     raise LiberaQtError(
-        "mkdocs is not installed and there is no built site to serve",
-        hint=f"{_docs_extra_hint(root)}  --  then `liberaqt docs` rebuilds as you edit",
+        f"serving the documentation needs {', '.join(missing)}, and there is no built site to "
+        f"fall back on",
+        hint=f"{_docs_extra_hint()}  --  then `liberaqt docs` rebuilds as you edit",
     )
 
 
 #: ``site_url:`` in mkdocs.yml, whose path is where mkdocs mounts the site -- locally too.
 _SITE_URL = re.compile(r"^\s*site_url:\s*(?P<url>\S+)", re.MULTILINE)
+
+
+def _url_host(host: str) -> str:
+    """The host part of a URL a browser can open, for an address a server binds."""
+    if host in ("0.0.0.0", "::", ""):
+        return "localhost"
+    return f"[{host}]" if ":" in host else host
 
 
 def docs_url(root: Path, host: str, port: int, with_prefix: bool = True) -> str:
@@ -532,7 +681,7 @@ def docs_url(root: Path, host: str, port: int, with_prefix: bool = True) -> str:
     mkdocs serves under the path of ``site_url``, so a project published at
     ``https://example.github.io/Thing/`` is served locally at ``/Thing/`` and the bare root only
     redirects there. Printing the root would send a reader one hop off, and ``--open`` would land
-    on a redirect.
+    on a redirect. A wildcard bind address is shown as ``localhost``, and an IPv6 one in brackets.
 
     Args:
         root: Directory holding ``mkdocs.yml``.
@@ -551,7 +700,24 @@ def docs_url(root: Path, host: str, port: int, with_prefix: bool = True) -> str:
             match = None
         if match:
             prefix = urlparse(match.group("url").strip("\"'")).path.strip("/")
-    return f"http://{host}:{port}/" + (f"{prefix}/" if prefix else "")
+    return f"http://{_url_host(host)}:{port}/" + (f"{prefix}/" if prefix else "")
+
+
+def _port_is_free(host: str, port: int) -> bool:
+    """Whether nothing is listening on ``host:port`` yet.
+
+    Exclusive on Windows, where an ordinary bind succeeds beside a server that is already there
+    -- which is how two ``liberaqt docs`` came to share port 8000 without a word.
+    """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
 
 
 def cmd_docs(args: argparse.Namespace) -> int:
@@ -563,6 +729,9 @@ def cmd_docs(args: argparse.Namespace) -> int:
     Returns:
         Process exit code.
     """
+    if args.action == "serve" and args.build:
+        print("`serve` and --build ask for opposite things; `liberaqt docs build` builds")
+        return 2
     build = args.build or args.action == "build"
     try:
         root = docs_root(args.source)
@@ -570,21 +739,29 @@ def cmd_docs(args: argparse.Namespace) -> int:
         print(f"{exc}")
         return 2
 
-    # Where `build` writes. Only the packaged copy needs redirecting -- it lives in
-    # site-packages, and mkdocs cleans its destination unconditionally. For a checkout this
-    # stays `root/site`, byte-identical to what it has always done; defaulting to the working
-    # directory instead would silently wipe any `./site` the user happens to keep, and would
-    # abort outright when run from inside `docs/` (mkdocs refuses a site_dir under docs_dir).
+    here = Path.cwd().resolve()
+    if not args.source and (here / "mkdocs.yml").is_file() and root != here:
+        print(f"note: ignoring {here / 'mkdocs.yml'}, which is not LiberaQT's; "
+              f"`--source .` builds it", flush=True)
+
+    # Where `build` writes: a checkout's own site/, or ./site for the packaged copy, which lives
+    # in site-packages and must not be written into.
     if args.site_dir:
-        site_dir = Path(args.site_dir).resolve()
-    elif root == PACKAGED_DOCS:
-        site_dir = Path.cwd() / "site"
-    else:
+        site_dir = Path(args.site_dir).absolute()
+    elif is_checkout(root):
         site_dir = root / "site"
+    else:
+        site_dir = here / "site"
 
     try:
         if build:
-            check_site_dir_is_disposable(site_dir, explicit=bool(args.site_dir))
+            # A site of ours counts as consent to replace it, like --force -- which still never
+            # overrides the refusals for a filesystem root, home, or anything above here.
+            check_site_dir_is_disposable(site_dir, force=args.force or _is_ours(site_dir, root))
+            site_dir = site_dir.resolve()
+        elif not _port_is_free(args.host, args.port):
+            raise LiberaQtError(f"port {args.port} on {args.host} is already in use",
+                                hint="Pass another with --port <n>.")
         argv, how = docs_command(root, args.host, args.port, build=build, site_dir=site_dir)
     except LiberaQtError as exc:
         print(f"{exc}")
@@ -597,6 +774,8 @@ def cmd_docs(args: argparse.Namespace) -> int:
     if build:
         print(f"building into {site_dir}", flush=True)
     else:
+        if "--directory" in argv:
+            print(f"serving the site in {argv[argv.index('--directory') + 1]}")
         print(f"serving the documentation with {how}")
         print(f"  {url}")
         print("  press Ctrl+C to stop", flush=True)
@@ -605,13 +784,25 @@ def cmd_docs(args: argparse.Namespace) -> int:
             # server that never returns would mean never opening it.
             webbrowser.open(url)
 
+    # The child writes paths to the same stream, so it gets the same tolerance for characters the
+    # console cannot encode -- and without Material's multi-paragraph MkDocs 2.0 notice.
+    env = {**os.environ, "NO_MKDOCS_2_WARNING": "1"}
+    env.setdefault("PYTHONIOENCODING", ":backslashreplace")
     try:
-        return subprocess.call(argv, cwd=str(root))
+        code = subprocess.call(argv, cwd=str(root), env=env)
     except FileNotFoundError as exc:
         print(f"could not run {argv[0]}: {exc}")
         return 2
     except KeyboardInterrupt:
         return 0
+    if build and code == 0:
+        try:
+            (site_dir / SITE_STAMP).write_text(
+                "Built by `liberaqt docs build`; safe for it to erase and rebuild.\n",
+                encoding="utf-8")
+        except OSError:
+            pass
+    return code
 
 
 def cmd_record(args: argparse.Namespace) -> int:
@@ -673,7 +864,12 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         A parser whose subcommands each set ``func`` to their handler.
     """
-    parser = argparse.ArgumentParser(prog="liberaqt", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="liberaqt",
+        # Plain text: this used to be the module docstring, so --help showed raw reST markup.
+        description="LiberaQT: UI automation for Qt applications. Check the environment, "
+                    "manage agents, inspect a running application, and read the documentation.",
+    )
     parser.add_argument("--version", action="version", version=f"liberaqt {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -742,15 +938,18 @@ def build_parser() -> argparse.ArgumentParser:
     # A plain positional with choices rather than a nested subparser: nested would force
     # --host/--port/--open/--source to be declared once per verb, and would make bare
     # `liberaqt docs` a special case.
-    p.add_argument("action", nargs="?", choices=("serve", "build"), default="serve",
+    p.add_argument("action", nargs="?", choices=("serve", "build"), default=None,
                    help="serve the documentation (the default), or build it and exit")
     p.add_argument("--host", default="127.0.0.1", help="address to bind (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8000, help="port to bind (default 8000)")
     p.add_argument("--open", action="store_true", help="open a browser at the served address")
     p.add_argument("--build", action="store_true",
                    help="older spelling of `liberaqt docs build`")
-    p.add_argument("--site-dir", help="where `build` writes the HTML (default: site/ beside "
-                                      "mkdocs.yml, or ./site for a packaged install)")
+    p.add_argument("--site-dir",
+                   help="where `build` writes the HTML. It is ERASED first, so it must be empty or "
+                        "a previous build (default: site/ in a checkout, else ./site)")
+    p.add_argument("--force", action="store_true",
+                   help="let `build` erase a --site-dir that holds other files")
     p.add_argument("--source", help="directory holding mkdocs.yml")
     p.set_defaults(func=cmd_docs)
 
@@ -773,6 +972,15 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Process exit code. ``1`` on a driver error, ``130`` on Ctrl-C.
     """
+    # A path the console's code page cannot encode -- a non-Latin directory name, with output
+    # piped as it is in CI or an IDE -- raised UnicodeEncodeError from a plain print() and killed
+    # the command before it did anything. Escape what cannot be encoded rather than dying on it.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

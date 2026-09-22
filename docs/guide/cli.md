@@ -1,7 +1,7 @@
 # Command line
 
 ```
-liberaqt [-h] [--version] {doctor,agents,inspect,record,run} ...
+liberaqt [-h] [--version] {doctor,agents,inspect,record,docs,run} ...
 ```
 
 ## doctor
@@ -69,28 +69,54 @@ Keeps installed agents in step with what has been published -- the answer to "th
 fixed and released; how do I get it?":
 
 ```bash
-liberaqt agents update --check     # report only, downloads nothing
+liberaqt agents update --check     # report only, downloads nothing; exits 1 if anything is behind
 liberaqt agents update             # refresh whatever is behind
 liberaqt agents update --tag qt6.5-windows-x86_64-mingw
 ```
 
 ```title="Output"
-checking 3 agent(s) against https://github.com/sargis2000/LiberaQt/releases/latest/download
+checking 4 agent(s) against https://github.com/sargis2000/LiberaQt/releases/latest/download
   qt6.5-windows-x86_64-mingw             update available   published archive differs from the installed one (a1b2c3d)
   qt6.7-windows-x86_64-mingw             local build        built here at 443bf85-dirty; `liberaqt agents build` to refresh
   qt5.15-windows-x86_64-msvc2015         cannot tell        nothing published for this ABI at that location
+  qt6.7-windows-x86_64-msvc2022          not managed        lives in D:\ci\agents, outside the cache; left as it is
 ```
 
 The comparison is against the 64-byte checksum published beside each archive, so checking every
-ABI you have installed costs almost nothing. Three states are deliberately *not* "behind":
+ABI you have installed costs almost nothing. `--check` exits 1 when something is behind, so a CI
+step can gate on it.
 
-* **local build** -- you built it yourself, so there is nothing to compare against and it is
-  usually newer than a release. Left alone.
-* **cannot tell** -- either nothing is published for that ABI, or the install predates version
-  stamping and carries no manifest. Reinstall to get one.
+| State | Acted on? | Means |
+|-------|-----------|-------|
+| update available | yes | the published archive is not the one installed |
+| damaged | yes | the binary on disk lacks its plugin key; reinstalling repairs it |
+| current | -- | nothing to do |
+| local build | never | you built it; nothing to compare against, and usually newer than a release |
+| damaged (local) | never | your own build is broken; `liberaqt agents build` rebuilds it |
+| not managed | never | it lives on `LIBERAQT_AGENT_PATH`, which is yours, not the cache's |
+| cannot tell | -- | nothing is published for that ABI, or the install predates version stamping |
+| could not check | -- | the location was unreachable, or served something that is not a checksum |
 
 `liberaqt agents list` shows the same provenance as a table: tag, revision, and where each set
-of bits came from.
+of bits came from. A tag on `LIBERAQT_AGENT_PATH` that shadows a cached copy is listed twice,
+with the copy a launch does not use marked as shadowed.
+
+#### The manifest
+
+What `list` and `update` read is `liberaqt-agent.json`, at the root of every install prefix:
+
+| Field | Written by | Meaning |
+|-------|-----------|---------|
+| `revision` | the build | `git describe` of the source it was built from |
+| `qt`, `plugin_key`, `compiler`, `abi_bits`, `quick` | the build | what ABI the binary is |
+| `agent_version`, `protocol`, `schema` | the build | versions |
+| `source`, `archive_sha256` | `agents install` | where these bits came from |
+
+An agent built before manifests existed has none, and reports its revision as `unknown`.
+`liberaqt agents build --tag <tag>` gives it one.
+
+Installing never replaces a working agent with a broken one: the archive is unpacked beside the
+cache, checked, and only then swapped in. A refused install leaves whatever was there untouched.
 
 ### kits
 
@@ -202,7 +228,7 @@ Serves this documentation for local reading, or builds it:
 liberaqt docs                           # http://127.0.0.1:8000/LiberaQt/
 liberaqt docs serve --port 9000 --open  # a different port, and open a browser
 liberaqt docs build                     # build and exit
-liberaqt docs build --site-dir out      # build somewhere of your choosing
+liberaqt docs build --site-dir out      # build into an empty directory of your choosing
 liberaqt docs --host 0.0.0.0            # reachable from another machine
 ```
 
@@ -210,31 +236,47 @@ liberaqt docs --host 0.0.0.0            # reachable from another machine
 |--------|--------|
 | `serve` / `build` | what to do. `serve` is the default, so bare `liberaqt docs` still serves |
 | `--host` | address to bind (default `127.0.0.1`) |
-| `--port` | port to bind (default `8000`) |
+| `--port` | port to bind (default `8000`); refused up front if something is already listening |
 | `--open` | open a browser at the served address |
 | `--build` | older spelling of `liberaqt docs build` |
-| `--site-dir` | where `build` writes the HTML |
-| `--source` | directory holding `mkdocs.yml`, if it is not alongside |
+| `--site-dir` | where `build` writes the HTML -- **erased first**, so it must be empty or a previous build |
+| `--force` | let `build` erase a `--site-dir` that holds other files |
+| `--source` | directory holding `mkdocs.yml`, for any mkdocs project |
 
-**You do not need a checkout.** The pages travel inside the wheel at `liberaqt/_docs/`, so
-`liberaqt docs` works straight after `pip install`. When you *are* in a checkout, that wins, so
-editing `docs/` and serving them stays one step.
+**You do not need a checkout, but you do need the `docs` extra.** The pages travel inside the
+wheel at `liberaqt/_docs/`, as Markdown; turning them into a site takes mkdocs, Material and
+mkdocstrings. If any of those is missing the command names which, and prints an install command
+that runs as printed -- through the Python you are running, for the extra's own packages, so it
+never reinstalls or replaces LiberaQT itself.
 
-With the `docs` extra installed it runs `mkdocs serve`, which **rebuilds a page as you edit it**.
-Without it, it falls back to serving whatever was last built into `site/` over `http.server`, and
-says so — no live reload, but you can still read the documentation without installing a builder.
-`build` has no fallback, because `http.server` can serve a site and cannot build one.
+When you are inside a LiberaQT checkout -- anywhere in it, `docs/` included -- the checkout's own
+pages win, so editing `docs/` and serving them stays one step. Another project's `mkdocs.yml` in
+the working directory is ignored, with a note; `--source .` builds it on purpose.
+
+With the extra installed it runs `mkdocs serve`, which **rebuilds a page as you edit it**.
+Without it, it falls back to serving a site this command built earlier, over `http.server`, and
+says so -- no live reload. `build` has no fallback, because `http.server` can serve a site and
+cannot build one.
 
 !!! warning "`build` erases its destination"
-    mkdocs cleans the directory it builds into. The default is `site/` beside `mkdocs.yml` in a
-    checkout, and `./site` for an installed copy -- so the command refuses a `site/` that holds
-    anything other than a previous build, rather than deleting your files. Pass `--site-dir` to
-    say you meant it.
+    mkdocs empties the directory it builds into, sparing only hidden files. So `build` writes
+    into a directory only if it is empty, or is a site it built itself -- every build leaves a
+    hidden `.liberaqt-docs-build` marker behind to say so. Anything else is refused, naming the
+    directory, rather than deleting your files; that includes `--site-dir .` in a project, and a
+    folder that merely contains a `404.html`. A link is judged by what it points at.
+
+    `--force` overrides that, for a directory whose contents really are disposable. Nothing
+    overrides the refusal for a filesystem root, your home directory, or a directory above the
+    one you are standing in.
 
 !!! note "The address is not the root"
     mkdocs mounts the site under the path in `site_url`, locally as well as when published, so
     this project serves at `/LiberaQt/`. The command prints the real address rather than the root,
-    which merely redirects.
+    which merely redirects -- and prints a wildcard bind like `0.0.0.0` as `localhost`, which is
+    what a browser can open.
+
+A built site links pages as folders (`ACTIONS/`), so open it through a web server -- `liberaqt
+docs` serves one -- rather than by opening `index.html` from disk.
 
 ## run
 

@@ -34,6 +34,21 @@ import pytest
 from liberaqt import LiberaQt, LiberaQtError
 from liberaqt.nlview import NLVIEW_CLASS, NlviewCanvas
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _asked_for_by_path(request):
+    """Refuse to launch Libero unless the live-suite gate let this file through.
+
+    tests/conftest.py decides that and records it on the config as `_liberaqt_live_consent`.
+    When it is absent, no gate ran at all -- `--noconftest` switches every conftest off -- and
+    the alternative to skipping is launching Libero and writing a project to disk. Module-scoped
+    and autouse, so it runs before any fixture here that starts the application.
+    """
+    consented = getattr(request.config, "_liberaqt_live_consent", frozenset())
+    if Path(request.node.path).resolve() not in consented:
+        pytest.skip("Libero runs only when asked for by path: pytest tests/e2e/libero")
+
+
 #: This suite writes a Libero project to a fixed path outside any tmp dir.
 pytestmark = pytest.mark.writes_disk
 

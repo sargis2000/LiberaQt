@@ -315,10 +315,21 @@ def _on_path(name: str) -> bool:
 def _pump(popen: subprocess.Popen, sink: list[str]) -> None:
     if popen.stdout is None:
         return
-    for line in popen.stdout:
-        sink.append(line.rstrip("\n"))
-        if len(sink) > 2000:
-            del sink[:1000]
+    try:
+        for line in popen.stdout:
+            sink.append(line.rstrip("\n"))
+            if len(sink) > 2000:
+                del sink[:1000]
+    except (OSError, ValueError):
+        pass
+    finally:
+        # The reader closes the pipe it reads, once it reaches EOF. Nothing else closed it at
+        # all -- one handle leaked per launch -- and closing it from terminate() instead would
+        # pull it out from under this loop mid-read.
+        try:
+            popen.stdout.close()
+        except OSError:
+            pass
 
 
 def _await_port(popen: subprocess.Popen, port_dir: Path, timeout: float,

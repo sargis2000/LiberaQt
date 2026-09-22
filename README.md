@@ -110,10 +110,10 @@ Full grammar: `docs/SELECTORS.md`.
 
 ## pytest
 
-```python
-# conftest.py
-pytest_plugins = ["liberaqt.pytest_plugin"]
+The plugin loads itself once the package is installed -- there is nothing to add to a conftest,
+and adding `pytest_plugins = ["liberaqt.pytest_plugin"]` registers it twice and aborts pytest.
 
+```python
 # test_login.py
 def test_login(app):
     win = app.window(title="Login")
@@ -123,13 +123,13 @@ def test_login(app):
 ```toml
 # liberaqt.toml
 [liberaqt]
-executable = "build/myapp"
+executable = "build/myapp"        # relative to this file
 object_map = "objects.yaml"
-headless = true
+headless = true                   # Linux only; --no-liberaqt-headless turns it off
 ```
 
-On failure the plugin writes a screenshot and the last 200 protocol messages to `liberaqt-trace/`,
-so a red CI run is debuggable without reproducing it locally.
+On failure the plugin writes a screenshot of every running application and the last protocol
+messages to `liberaqt-trace/`, so a red CI run is debuggable without reproducing it locally.
 
 ## CLI
 
@@ -140,7 +140,7 @@ liberaqt inspect ./app       suggest a selector for every object, and say which 
 liberaqt inspect ./app -i    same, then drop into a REPL with `app` and `win` bound
 liberaqt inspect ./app --validate objects.yaml   check an object map still resolves
 liberaqt record ./app -o test_x.py
-liberaqt docs                serve the documentation locally (ships inside the wheel)
+liberaqt docs                serve the documentation locally (needs the [docs] extra)
 liberaqt docs build          build it into ./site
 liberaqt run tests/
 ```
@@ -180,15 +180,16 @@ pytest tests/unit      # unit tests of the client, no Qt needed
 Tests live in one tree, split by what has to be installed to run them:
 
 ```bash
-pytest tests/unit          # 324 tests. Pure Python -- no Qt, no agent. This is what CI runs.
+pytest tests/unit          # pure Python -- no Qt, no agent. This is what CI runs.
 pytest tests/e2e/qt        # drives Qt's own shipped tools; needs a Qt installation
 pytest tests/e2e/libero    # drives Microchip Libero SoC; needs Libero and a 32-bit agent
 ```
 
-The live suites are opted into **by path** -- `pytest` and `pytest tests/` run the unit tests and
-report the rest as deselected -- because they launch real applications and some of them write
-projects to disk. Within them, markers cut the other way: `-m "libero and not writes_disk"`,
-`-m "live and not slow"`.
+The live suites are opted into **by path**, because they launch real applications and some of
+them write projects to disk. `pytest` alone runs only the unit tests; `pytest tests/` collects
+the live ones too and deselects them, saying which command would ask for each. A marker is
+never consent -- `-m "not slow"` cannot start Libero -- but inside the live tree markers cut
+across it: `pytest tests/e2e -m "libero and not writes_disk"`.
 
 A green `tests/unit` says the client's parsing, selectors and error handling are sound. It says
 nothing about whether the agent works: that is what `tests/e2e` is for, and it is not run by CI.

@@ -70,7 +70,7 @@ def qt_tool(pytestconfig: pytest.Config):
     ``--liberaqt-qt-bin`` (or ``LIBERAQT_QT_BIN``, or ``QTDIR``) picks the installation, which is
     how you point the suite at a particular Qt version::
 
-        pytest tests/e2e --liberaqt-qt-bin "C:/Qt/6.5.9/mingw_64/bin"
+        pytest tests/e2e/qt --liberaqt-qt-bin "C:/Qt/6.5.3/mingw_64/bin"
 
     Returns:
         A callable taking an application name -- ``"assistant"``, ``"qmleasing"`` -- and

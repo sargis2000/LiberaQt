@@ -172,3 +172,98 @@ def test_an_explicit_base_url_beats_both(monkeypatch):
 def test_a_missing_archive_is_reported_not_swallowed(cache, tmp_path):
     with pytest.raises(AgentInstallError, match="could not read"):
         install(TAG, source=str(tmp_path / "nothing.zip"))
+
+
+# ------------------------------------------------------------------ found by the QA pass
+
+
+def test_a_refused_install_leaves_nothing_behind(cache, tmp_path):
+    """Refused used to mean "raised" -- the bits stayed, stamped, and doctor vouched for them."""
+    source = _write(tmp_path / "a.zip", _good_archive(key=b"liberaqt_6_7_64_gnu"))
+    with pytest.raises(AgentInstallError):
+        install(TAG, source=source)
+    agents = cache / "cache" / "agents"
+    assert not (agents / TAG).exists()
+    assert agent_registry.installed() == [], "nothing refused may be visible to a launch"
+
+
+def test_a_refused_reinstall_keeps_the_working_agent(cache, tmp_path):
+    """The old prefix was removed before the new bits were checked, so refusing destroyed it."""
+    good = _write(tmp_path / "good.zip", _good_archive())
+    prefix = install(TAG, source=good)
+    working = (prefix / "plugins" / "generic" / "liberaqt.dll").read_bytes()
+
+    bad = _write(tmp_path / "bad.zip", _good_archive(key=b"liberaqt_6_7_64_gnu"))
+    with pytest.raises(AgentInstallError):
+        install(TAG, source=bad)
+
+    assert (prefix / "plugins" / "generic" / "liberaqt.dll").read_bytes() == working
+
+
+def test_a_refused_install_gets_no_provenance_stamp(cache, tmp_path):
+    source = _write(tmp_path / "a.zip", _good_archive(key=b"nothing"))
+    with pytest.raises(AgentInstallError):
+        install(TAG, source=source)
+    assert not (cache / "cache" / "agents" / TAG / agent_registry.MANIFEST_NAME).exists()
+
+
+def test_no_staging_directory_is_left_behind(cache, tmp_path):
+    source = _write(tmp_path / "a.zip", _good_archive(key=b"nothing"))
+    with pytest.raises(AgentInstallError):
+        install(TAG, source=source)
+    install(TAG, source=_write(tmp_path / "b.zip", _good_archive()))
+    leftovers = [p.name for p in (cache / "cache" / "agents").iterdir() if p.name.startswith(".")]
+    assert not leftovers, f"staging left behind: {leftovers}"
+
+
+def test_what_is_checked_is_what_was_unpacked(cache, tmp_path, monkeypatch):
+    """A copy on LIBERAQT_AGENT_PATH with the same tag must not stand in for the new bits."""
+    shadow = tmp_path / "mine" / TAG / "plugins" / "generic"
+    shadow.mkdir(parents=True)
+    (shadow / "liberaqt.dll").write_bytes(b"..liberaqt_5_15_64_msvc..")
+    monkeypatch.setattr(agent_registry, "search_paths",
+                        lambda: [tmp_path / "mine", cache / "cache" / "agents"])
+
+    source = _write(tmp_path / "a.zip", _good_archive(key=b"nothing"))
+    with pytest.raises(AgentInstallError, match="does not carry"):
+        install(TAG, source=source)
+
+
+@pytest.mark.parametrize("tag", [
+    "../../pwned",
+    "qt6.7-windows-x86_64-mingw/../../pwned",
+    "qt6.7-windows-x86_64-..",
+    "..",
+    "not-a-tag",
+    r"qt6.7-windows-x86_64-mingw\..\x",
+])
+def test_a_tag_that_is_not_tag_shaped_is_refused(cache, tmp_path, tag):
+    """The tag becomes a directory name; `--tag ../../pwned` unpacked outside the cache."""
+    source = _write(tmp_path / "a.zip", _good_archive())
+    with pytest.raises(AgentInstallError, match="not a build tag"):
+        install(tag, source=source)
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_a_real_tag_with_a_hyphenated_compiler_is_accepted(cache):
+    from liberaqt.agent_install import install_prefix
+
+    tag = "qt6.7-windows-x86_64-llvm-mingw"
+    assert install_prefix(tag).name == tag
+
+
+def test_a_checksum_that_is_not_a_checksum_says_so(cache, tmp_path):
+    """An HTML error page served as .sha256 used to read as "the download is corrupt"."""
+    source = _write(tmp_path / "a.zip", _good_archive())
+    (tmp_path / "a.zip.sha256").write_text("<!DOCTYPE html><title>Not Found</title>")
+    with pytest.raises(AgentInstallError, match="not a sha256 checksum"):
+        install(TAG, source=source)
+
+
+def test_a_mislabelled_manifest_is_refused(cache, tmp_path):
+    archive = _archive({
+        "plugins/generic/liberaqt.dll": b"..liberaqt_5_15_64_msvc..",
+        "liberaqt-agent.json": b'{"schema": 1, "plugin_key": "liberaqt_6_7_64_gnu"}',
+    })
+    with pytest.raises(AgentInstallError, match="manifest for liberaqt_6_7_64_gnu"):
+        install(TAG, source=_write(tmp_path / "a.zip", archive))

@@ -114,17 +114,37 @@ the client parses selectors and maps errors correctly and says *nothing* about w
 lands. Not one line of `agent/src/` executes. CI additionally builds the agent on four ABIs, which
 is a compile check and nothing more, plus one job asserting the wheel still carries the docs.
 
-**The live suites are opted into by path, and only by path.** `pytest`, `pytest tests/` and
-`pytest tests/unit` all run the 324 unit tests and report the 103 live ones as deselected.
-`tests/conftest.py` enforces this. Two deliberate refusals in there, both of which were live traps
-in an earlier draft of the split:
+**The live suites are opted into by path, and only by path.** `pytest` and `pytest tests/unit`
+never collect them; `pytest tests/` collects and deselects all 103, and says which command asks
+for each part. `tests/conftest.py` enforces it, and `tests/unit/test_live_gate.py` pins it with
+real inner sessions over a miniature tree using the real conftest -- **the first version of this
+gate shipped with five bypasses because nothing tested it**, and the old gate fails 16 of those
+tests. What its rules are, and the hole each one closed:
 
-* A marker expression is **not** consent. `-m "not slow"` is the obvious way to ask for a quicker
-  run; had any `-m` counted as opting in, it would have launched Libero SoC instead. Measured:
-  `-m "not slow"`, `-m "not writes_disk"` and `-m "not libero"` all deselect the 103.
-* Pinning a Qt while selecting no live test is a **hard error**, not a green run.
-  `pytest tests/ --liberaqt-qt-bin <dir>` exits 4 naming the form that would have worked. Exiting
-  0 having driven nothing is the same failure the `qt_tool` docstring warns about one level down.
+* **Consent comes from `config.args`, and only when `config.args_source` is `ARGS`.** The first
+  version scanned the raw command line and read every word not starting with `-` as a path --
+  option *values* included -- so `pytest tests/ --ignore tests/e2e/qt`, an *exclusion*, opted the
+  run into all 40 Libero tests (`--ignore=` with an equals sign did not, which is why it hid).
+  `--deselect X`, `--rootdir tests/e2e`, `-p no:cacheprovider` from inside the tree: same hole.
+  `testpaths` and the fallback to the working directory are never consent; `@file`,
+  `PYTEST_ADDOPTS` and `addopts` paths are, since they are positional arguments.
+* **Consent is per test.** A live argument covers only the tests beneath it (a node id covers
+  what it names, and `::test_x` does not cover `test_x_other`). It used to be one yes/no for the
+  run, so `pytest tests/ tests/e2e/qt` got Libero too, and so did a node id that matched nothing.
+* **A marker is never consent**, and the gate runs `trylast` -- after pytest's own `-m`, `-k` and
+  `--deselect` -- while the directory markers are applied in `pytest_itemcollected`, before them.
+  Two implementations of one hook cannot live in one module, which is why marking moved there.
+* **The Libero modules have a backstop**, because `--noconftest` switches the gate off with every
+  other conftest. Each carries a module-scoped autouse `_asked_for_by_path` fixture that skips
+  unless the gate recorded consent for its file in `config._liberaqt_live_consent`. Module-scoped
+  so it runs before the module fixture that launches Libero; a function-scoped one would run
+  after. `test_tree_layout.py` checks every Libero module has it.
+* **The Qt pin is checked in `pytest_collection_finish`, against the final selection.**
+  `--liberaqt-qt-bin` with no Qt test selected is a usage error; a pinned directory that does not
+  exist is one too, where it used to skip all 63 and exit 0. `LIBERAQT_QT_BIN` is a standing
+  default, so exporting it no longer breaks `pytest tests/ -m "not live"`. The option lives in a
+  conftest, so pytest's first pass does not know it: write `--liberaqt-qt-bin=DIR`, or put a
+  test path before it.
 
 **`tests/e2e/` drives real applications**, is not run by CI, and is where every agent bug this
 project has had was found. It skips cleanly when the application it needs is absent.
@@ -184,7 +204,7 @@ pytest tests/e2e/qt/test_actions_live.py tests/e2e/qt/test_selectors_live.py   #
 
 # Every Qt-based suite resolves its application through conftest's `qt_tool`, so one flag
 # points the whole set at a particular Qt -- which is how you verify a new Qt version:
-pytest tests/e2e/qt/test_actions_live.py tests/e2e/qt/test_selectors_live.py tests/e2e/qt/test_qml_live.py        tests/e2e/qt/test_docs_examples.py --liberaqt-qt-bin "C:/Qt/6.5.9/mingw_64/bin"
+pytest tests/e2e/qt/test_actions_live.py tests/e2e/qt/test_selectors_live.py tests/e2e/qt/test_qml_live.py        tests/e2e/qt/test_docs_examples.py --liberaqt-qt-bin "C:/Qt/6.5.3/mingw_64/bin"
 # The choice is exclusive: a path with no Qt in it skips rather than falling back to another
 # installation, because silently testing 6.7 while believing you tested 6.5 is worse than a skip.
 pytest tests/e2e/libero/test_libero_selectors.py                          # read-only, ~10s
@@ -394,6 +414,14 @@ LIBERAQT_RECORD=1               # only in recorder mode
 The agent is a Qt plugin, so it must match the AUT's Qt **minor** version (6.7, not 6.8) and its
 compiler/stdlib ABI.
 
+**`resolve()` matches the compiler family, not just Qt version and platform.** It reads the toolchain
+from the binary's Qt build stamp (`inspect_binary().toolchain`) and keeps only agents of that family
+(`compiler_family()`: MSVC 2015/2019/2022 are one; MinGW is another). It used to ignore the
+compiler, so with both `qt5.15-windows-x86-mingw` and `-msvc2019` installed, Libero -- MSVC -- got the
+MinGW agent, whichever sorted first. The Libero suite still passed, because the launcher lists every
+installed agent's key and the MinGW load failed first, so Qt fell through to the MSVC one; `doctor`
+reported the wrong agent outright. Only the wrong compiler installed is now a refusal that says so.
+
 **The version rule is asymmetric, and `resolve()` relies on it.** Qt keeps plugins forward
 compatible within a major release, so an agent built against 6.5 loads into 6.5, 6.6 and 6.7 —
 but one built against 6.7 is refused by a 6.5 host, silently, in the usual way (no agent, no port
@@ -438,14 +466,31 @@ liberaqt agents update --tag qt6.5-windows-x86_64-mingw
 ```
 
 `update` compares the installed `archive_sha256` against the **64-byte checksum** published
-beside the archive, so checking every ABI costs almost nothing. Three outcomes that are not
-"behind", and all three are reported as themselves rather than collapsed into one:
+beside the archive, so checking every ABI costs almost nothing. `--check` exits **1** when
+something is behind, the `ruff format --check` convention, so CI can gate on it. Every state is
+reported as itself rather than collapsed into another:
 
-* **local build** — no published counterpart, and usually *newer* than a release. Left alone;
-  `liberaqt agents build` refreshes it.
-* **nothing published for this ABI** — Qt 5.15 msvc2015 and the arm64 kits have no runner to
-  build them on. Not out of date, just absent.
+* **update available** / **damaged** — acted on. Damaged means the binary on disk lacks its
+  plugin key; the recorded archive checksum alone can only ever say "the release has not moved",
+  never "these bits are intact", so it is checked against the file itself.
+* **local build** — no published counterpart, and usually *newer* than a release. Left alone,
+  and still left alone when damaged; `liberaqt agents build` refreshes it.
+* **not managed** — the build lives on `LIBERAQT_AGENT_PATH`, not in the cache. Never written:
+  update used to read that copy and write to the cache it shadows, so it said "updated" on every
+  run and never converged. It also considers only `agent_registry.effective()` — one build per
+  tag, the one a launch uses — never `installed()`, which lists a tag once per directory.
+* **nothing published for this ABI** — a 404. Qt 5.15 msvc2015 and the arm64 kits have no runner.
+* **could not check** — unreachable, or the `.sha256` is not a checksum (an HTML error page
+  served with a 200). Kept distinct from "nothing published", which it used to be reported as.
 * **cannot tell** — no manifest, so it predates version stamping. Reinstall to get one.
+
+**`install` validates before it replaces.** It unpacks into a dotted staging directory beside the
+cache (the registry skips dotted names), checks *those* bits — not `installed()`'s first match
+for the tag, which may be a copy on `LIBERAQT_AGENT_PATH` — stamps the manifest, and only then
+swaps them in. It used to delete the live prefix first, so a refused reinstall destroyed a
+working agent and left the refused one in its place, provenance and all, which `doctor` then
+reported as a match. A `--tag` that is not tag-shaped is refused: it is a directory name, and
+`--tag ../../x` used to unpack outside the cache.
 
 Archives live at `<base>/<tag>.zip` with an optional `<tag>.zip.sha256`. The default base is
 `https://github.com/sargis2000/LiberaQt/releases/latest/download` — `releases/latest/download` is
@@ -474,10 +519,27 @@ consequences, each of which cost a real bug to find:
 * **`build` must pass an absolute `--site-dir`.** mkdocs resolves both `site_dir:` and a
   *relative* `--site-dir` against the config file, which from a wheel is inside site-packages —
   so an unguarded build writes the whole site in there, exit 0, no warning.
-* **mkdocs erases its destination.** The default is `site/` beside `mkdocs.yml` for a checkout
-  (unchanged behaviour) and `./site` only for a packaged install, where there is nowhere else to
-  put it. `check_site_dir_is_disposable()` refuses a non-empty directory that is not a previous
-  build, because `./site` is the user's, not ours. Naming `--site-dir` is consent.
+* **mkdocs erases its destination, so ownership decides what `build` may write into -- never
+  file names.** Every build writes a hidden `SITE_STAMP` (`.liberaqt-docs-build`), which mkdocs'
+  clean keeps because it skips dotfiles; a destination is disposable only if it has no visible
+  entries or carries the stamp. The first version trusted any folder holding a `404.html` or a
+  `sitemap.xml` and erased everything else in it, and treated naming `--site-dir` as consent --
+  so `--site-dir .` in a project deleted every visible file in it, exit 0. `--force` is consent
+  now, and nothing overrides the refusal for a filesystem root, home, or an ancestor of the cwd.
+  A link is judged, and named, by its target: through a junction, the erased files used to live
+  outside the working tree. A checkout's own `site/` is trusted unstamped, so builds from before
+  the stamp still work.
+* **Only a real checkout counts as one**: `is_checkout()` wants `mkdocs.yml` *and*
+  `src/liberaqt/`, searched from the cwd upwards. Any `mkdocs.yml` used to do, so a user's own
+  docs were served and built under LiberaQT's name; and from a checkout's `docs/` the checkout was
+  missed, a site was built into the documentation sources, and `force-include` shipped it in the
+  next wheel (+1.2 MB, 71 entries). The static fallback serves only a stamped site, for the same
+  reason.
+* **The install hint is built from `sys.executable` and the extra's own requirements**, read
+  from the installed metadata. Asking pip for `liberaqt[docs]` re-cloned the repository -- fatal
+  offline, and it replaced a pinned version with `main` -- and `pip install -e ".[docs]"` from
+  anywhere but a checkout's root installed the user's own project. `docs_command` checks every
+  module of the extra, not just mkdocs.
 * **`pip install -e` copies `liberaqt/_docs` into site-packages too**, where nothing reads it
   (the editable package resolves to `src/liberaqt`). Inert but stale; hatchling offers no
   pyproject-level way to skip force-include for editable builds.
@@ -521,7 +583,10 @@ so the key carries all three: `liberaqt_5_15_64_msvc`, `liberaqt_6_7_64_gnu`,
 
 `agent/CMakeLists.txt` generates it into `liberaqt_plugin.json` via `configure_file`, and
 `plugin_key_for()` in `agent_registry.py` derives the same string from an install tag — the two
-must stay in step. The launcher names every installed agent's key in `QT_QPA_GENERIC_PLUGINS`, so
+must stay in step. The same CMake variable is compiled in as `LIBERAQT_PLUGIN_KEY`, so the hello
+banner's `capabilities["abi_key"]` names the key the plugin was actually loaded under. It used
+to rebuild the key from pointer size alone and report `liberaqt_64` -- the scheme per-ABI keys
+replaced -- so every agent described itself wrongly; an agent that still says so predates the fix. The launcher names every installed agent's key in `QT_QPA_GENERIC_PLUGINS`, so
 each process asks for the one it can load and is refused the rest harmlessly. **After changing
 anything here, check the key is really in the binary**; `liberaqt doctor` does it for every
 installed agent and marks a build that lacks its own key `STALE`. `liberaqt doctor` checks this for every
@@ -614,6 +679,30 @@ Fixtures: `app` (per-test Application), `app_session` (session-scoped), `win`, `
 `--liberaqt-slowmo`, `--liberaqt-timeout`, `--liberaqt-trace`, `--liberaqt-input-mode`. Config comes from
 `<rootdir>/liberaqt.toml` under `[liberaqt]`. On failure the plugin writes a screenshot and the
 last protocol messages to `liberaqt-trace/`.
+
+Four things about it that each cost a real bug, all pinned by `tests/unit/test_pytest_plugin.py`
+(which runs real inner sessions through `pytester` — precedence is an interaction between pytest,
+the plugin and the file, not a property of one function):
+
+* **An option that has a default cannot beat the config file.** `--liberaqt-timeout` had
+  `default=5.0`, so `setdefault` could not tell "passed" from "not passed" and the toml always
+  won. Options that the toml can also set have `default=None`, and `--liberaqt-headless` is a
+  `BooleanOptionalAction` so the command line can turn it *off* — `headless = true` otherwise
+  hard-failed every test on Windows with no way out.
+* **Diagnostics are written from `pytest_runtest_makereport`, not a fixture teardown.** Teardown
+  is too late for `app`, which closes its application there, and never ran for `app_session` at
+  all. The hook fires after the test body and before any teardown, finds the driver through
+  `config.stash`, and captures every application still running.
+* **File names come from the scrubbed node id**, capped at 150 characters. The bare test name
+  collided across files, and on Windows a `:` in a parametrize id wrote both files into NTFS
+  alternate data streams of a zero-byte file, invisible to everything.
+* **The auth token is redacted in `Transport._record`**, because the history is what lands in
+  `liberaqt-trace/` and CI uploads that folder. It redacts a *copy*: the wire bytes are
+  serialised before `_record` runs, but mutating the caller's dict would still be a trap.
+
+A config that exists and is ignored must never be silent: an unknown key, a `[tool.liberaqt]`
+section and a Python without a TOML parser all warn. The last one was every 3.9/3.10 user until
+`tomli` was made a dependency for them — including the 3.9 CI leg.
 
 ## Selectors
 

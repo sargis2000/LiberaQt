@@ -114,14 +114,23 @@ void Server::sendHello()
 #else
     capabilities.insert(QStringLiteral("quick"), false);
 #endif
-    // Pointer size, and the plugin key that follows from it. A plugin key binds to exactly one
-    // library, so a build must advertise a key naming its own architecture or it locks every
-    // other one in the process tree out; reporting it here lets a client check what it is
-    // actually talking to. See AgentPlugin.
+    // Pointer size, and the plugin key this build was compiled with. A plugin key binds to exactly
+    // one library, so a build must advertise a key naming its own ABI -- Qt minor version,
+    // pointer size and compiler together -- or it locks every other one in the process tree out;
+    // reporting it here lets a client check what it is actually talking to. See AgentPlugin.
+    //
+    // The key comes from CMake, the same variable that writes it into liberaqt_plugin.json. It
+    // used to be rebuilt here from pointer size alone ("liberaqt_64"), which is the scheme the
+    // per-ABI keys replaced -- so the banner named a key the plugin did not carry.
     const int bits = static_cast<int>(sizeof(void *) * 8);
     capabilities.insert(QStringLiteral("abi"), bits);
+#ifdef LIBERAQT_PLUGIN_KEY
+    capabilities.insert(QStringLiteral("abi_key"), QStringLiteral(LIBERAQT_PLUGIN_KEY));
+#else
+    // Built outside agent/CMakeLists.txt, which is the only thing that knows the full key.
     capabilities.insert(QStringLiteral("abi_key"),
                         bits == 64 ? QStringLiteral("liberaqt_64") : QStringLiteral("liberaqt_32"));
+#endif
     hello.insert(QStringLiteral("capabilities"), capabilities);
 
     writeMessage(hello);

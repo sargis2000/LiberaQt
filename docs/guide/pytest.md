@@ -14,13 +14,36 @@ Put defaults in `liberaqt.toml` at your rootdir, so tests do not hard-code paths
 ```toml title="liberaqt.toml"
 [liberaqt]
 executable = "C:/Qt/6.7.3/mingw_64/bin/assistant.exe"
+args = ["-quiet"]                  # passed to the application
+object_map = "objects.yaml"        # enables win.obj("section.name")
 qt = "6.7"
 timeout = 10.0
 input_mode = "native"
-headless = false
+headless = false                   # true is Linux-only: offscreen QPA
 ```
 
-Precedence is **command line → `liberaqt.toml` → the `LIBERAQT_EXE` environment variable**.
+A relative `executable` or `object_map` is relative to `liberaqt.toml`, so a checked-in config
+works from any directory. An unknown key, or a `[tool.liberaqt]` section written out of pyproject
+habit, is reported as a warning rather than ignored.
+
+The command line always wins, so CI can shorten a checked-in timeout without editing the file.
+Not every setting has every source:
+
+| Setting | Command line | `liberaqt.toml` | Environment | Default |
+|---------|--------------|-----------------|-------------|---------|
+| executable | `--liberaqt-exe` | `executable` | `LIBERAQT_EXE` | none -- tests skip |
+| timeout | `--liberaqt-timeout` | `timeout` | | 5.0 |
+| headless | `--liberaqt-headless` / `--no-liberaqt-headless` | `headless` | | false |
+| input mode | `--liberaqt-input-mode` | `input_mode` | | native |
+| Qt version | `--liberaqt-qt` | `qt` | | detected |
+| arguments | | `args` | | none |
+| object map | | `object_map` | | none |
+| slow motion | `--liberaqt-slowmo` | | | 0 |
+| protocol trace | `--liberaqt-trace` | | | off |
+
+!!! note "Python 3.9 and 3.10"
+    `liberaqt.toml` is read with `tomllib`, which joined the standard library in 3.11. On older
+    Pythons the package depends on `tomli` to fill the gap.
 
 ## Fixtures
 
@@ -28,9 +51,13 @@ Precedence is **command line → `liberaqt.toml` → the `LIBERAQT_EXE` environm
 |---------|-------|------------|
 | `app` | function | a freshly launched `Application` |
 | `app_session` | session | one `Application` shared by the whole run |
-| `win` | function | the application's main window |
-| `liberaqt` | function | the `LiberaQt` entry point itself |
-| `liberaqt_config` | session | the resolved configuration dict |
+| `win` | function | the main window of a fresh `app` |
+| `liberaqt` | session | the `LiberaQt` entry point itself |
+| `liberaqt_config` | session | the merged settings; every key present, `None` when unset |
+
+!!! warning "`win` launches its own application"
+    `win` is built on `app`, so asking for `win` alongside `app_session` starts a *second*
+    process. With `app_session`, take the window from it: `app_session.window()`.
 
 ```python
 def test_the_window_opens(win):
@@ -56,7 +83,7 @@ def test_a_dock_is_present(app):
 |--------|--------|
 | `--liberaqt-exe PATH` | the application to launch |
 | `--liberaqt-qt 6.7` | force a Qt version instead of detecting it |
-| `--liberaqt-headless` | offscreen QPA platform (Linux only) |
+| `--liberaqt-headless` / `--no-liberaqt-headless` | offscreen QPA platform (Linux only), either way |
 | `--liberaqt-slowmo 0.5` | sleep before each command, to watch a test run |
 | `--liberaqt-timeout 10` | default action timeout |
 | `--liberaqt-trace` | log every protocol message |
@@ -71,13 +98,26 @@ every command enough to watch.
 
 ## Failure diagnostics
 
-When a test fails, the plugin writes to `liberaqt-trace/`:
+When a test fails, the plugin writes to `liberaqt-trace/` under the rootdir:
 
 - a **screenshot** of the application at the moment of failure;
 - the **last protocol messages** exchanged.
 
 That is usually enough to tell "the selector matched nothing" from "the click landed on the wrong
 thing" without re-running.
+
+It captures **every application still running** when the test body fails -- the one `app`
+launched, the one `app_session` shares, and any other process the test started -- and it does so
+before any fixture tears down, so the screenshot shows the state that failed. With more than one
+application running, each file name carries the process id.
+
+Files are named from the full test id, made safe for every filesystem, so two tests with the same
+name in different files cannot overwrite each other, and a parametrize id containing a Windows
+path cannot turn into something no directory listing shows. The folder is cleared at the start
+of each run, so what is in it always belongs to the run that just finished.
+
+The per-launch authentication token is redacted from the protocol log. The folder is meant to
+be uploaded as a CI artifact, and while an application is running that token is a credential.
 
 ## Writing your own fixtures
 

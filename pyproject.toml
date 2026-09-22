@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = [
   "typing-extensions>=4.0; python_version<'3.11'",
+  # liberaqt.toml is read with tomllib, which only joined the standard library in 3.11. Without
+  # this, every 3.9 and 3.10 user -- and the 3.9 CI leg -- had their liberaqt.toml ignored.
+  "tomli>=1.1; python_version<'3.11'",
 ]
 
 [project.optional-dependencies]

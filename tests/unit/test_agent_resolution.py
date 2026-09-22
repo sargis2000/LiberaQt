@@ -115,3 +115,49 @@ def test_an_unreadable_application_still_reports_what_is_installed(tmp_path, mon
     with pytest.raises(AgentMismatchError) as excinfo:
         agent_registry.resolve(str(Path("app.exe")))
     assert "qt6.7-windows-x86_64-mingw" in str(excinfo.value)
+
+
+# ------------------------------------------------------------------ the compiler has to match
+
+
+@pytest.fixture
+def resolve_compilers(tmp_path, monkeypatch):
+    """Resolve for an application built with a stated toolchain, among agents of several."""
+    def run(app_toolchain, compilers, qt="5.15", arch="x86"):
+        builds = [_build(tmp_path, qt, compiler=c, arch=arch) for c in compilers]
+        monkeypatch.setattr(agent_registry, "installed", lambda: builds)
+        monkeypatch.setattr(agent_registry, "detect_qt_version", lambda exe: qt)
+        monkeypatch.setattr(agent_registry, "target_platform_tag", lambda exe: f"windows-{arch}")
+        monkeypatch.setattr(agent_registry, "_binary_toolchain", lambda exe: app_toolchain)
+        return agent_registry.resolve("app.exe")
+    return run
+
+
+def test_an_msvc_application_gets_the_msvc_agent_even_when_mingw_sorts_first(resolve_compilers):
+    """Libero is MSVC; it was handed the MinGW agent for its Qt and bitness instead.
+
+    Whichever sorted first won, and Libero loaded an agent at all only because that load failed.
+    """
+    assert resolve_compilers("msvc", ["mingw", "msvc2019"]).compiler == "msvc2019"
+
+
+def test_a_mingw_application_gets_the_mingw_agent(resolve_compilers):
+    assert resolve_compilers("mingw", ["mingw", "msvc2019"]).compiler == "mingw"
+
+
+def test_msvc_versions_are_one_family(resolve_compilers):
+    """2015, 2019 and 2022 are binary compatible, so any of them serves an MSVC application."""
+    assert resolve_compilers("msvc", ["msvc2015"]).compiler == "msvc2015"
+
+
+def test_only_the_wrong_compiler_is_a_refusal_that_says_so(resolve_compilers):
+    with pytest.raises(AgentMismatchError) as excinfo:
+        resolve_compilers("msvc", ["mingw"])
+    text = str(excinfo.value)
+    assert "another compiler" in text
+    assert "qt5.15-windows-x86-mingw" in text
+
+
+def test_an_unreadable_binary_keeps_the_old_behaviour(resolve_compilers):
+    """No toolchain in the stamp means no compiler preference, not a refusal."""
+    assert resolve_compilers(None, ["mingw"]).compiler == "mingw"

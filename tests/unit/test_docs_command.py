@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
+from liberaqt import cli
 from liberaqt.cli import (
+    SITE_STAMP,
     build_parser,
     check_site_dir_is_disposable,
     docs_command,
@@ -21,12 +23,19 @@ from liberaqt.cli import (
 from liberaqt.errors import LiberaQtError
 
 
+def _make_checkout(path):
+    """What makes a directory a LiberaQT checkout -- mkdocs.yml alone is any mkdocs project."""
+    (path / "docs").mkdir(parents=True, exist_ok=True)
+    (path / "mkdocs.yml").write_text("site_name: Test\n")
+    (path / "src" / "liberaqt").mkdir(parents=True, exist_ok=True)
+    (path / "src" / "liberaqt" / "__init__.py").write_text("")
+    return path
+
+
 @pytest.fixture
 def project(tmp_path):
-    """A directory that looks like a checkout: mkdocs.yml and a docs/ folder."""
-    (tmp_path / "mkdocs.yml").write_text("site_name: Test\n")
-    (tmp_path / "docs").mkdir()
-    return tmp_path
+    """A directory that looks like a LiberaQT checkout."""
+    return _make_checkout(tmp_path)
 
 
 def _no_mkdocs(monkeypatch):
@@ -183,9 +192,7 @@ def test_a_checkout_wins_over_the_packaged_copy(tmp_path, monkeypatch):
     ``Path.cwd()`` answer first, and the test would pass whatever order the two constants are
     searched in -- which is no test of precedence at all.
     """
-    checkout = tmp_path / "checkout"
-    (checkout / "docs").mkdir(parents=True)
-    (checkout / "mkdocs.yml").write_text("site_name: Checkout")
+    checkout = _make_checkout(tmp_path / "checkout")
     packaged = tmp_path / "packaged"
     (packaged / "docs").mkdir(parents=True)
     (packaged / "mkdocs.yml").write_text("site_name: Packaged")
@@ -221,27 +228,59 @@ def test_the_static_fallback_prefers_the_site_that_was_built(project, monkeypatc
     built = tmp_path / "built"
     built.mkdir()
     (built / "index.html").write_text("<h1>docs</h1>")
+    (built / SITE_STAMP).write_text("")
     _no_mkdocs(monkeypatch)
 
     argv, _ = docs_command(project, "127.0.0.1", 8000, site_dir=built)
     assert str(built) in argv
 
 
-def test_the_hint_for_a_packaged_install_is_a_command_that_can_work(monkeypatch):
-    """Nothing is published on PyPI, so `pip install liberaqt[docs]` would resolve to nothing."""
+def test_someone_elses_site_is_not_served_as_liberaqts(project, monkeypatch, tmp_path):
+    """Any ./site/index.html used to be served, and labelled LiberaQT's documentation."""
+    foreign = tmp_path / "theirs"
+    foreign.mkdir()
+    (foreign / "index.html").write_text("<title>SOMEONE ELSES SITE</title>")
+    _no_mkdocs(monkeypatch)
+    with pytest.raises(LiberaQtError):
+        docs_command(tmp_path / "packaged-root", "127.0.0.1", 8000, site_dir=foreign)
+
+
+# ------------------------------------------------------------------ the install hint
+
+
+def _missing_hint(monkeypatch):
     _no_mkdocs(monkeypatch)
     with pytest.raises(LiberaQtError) as excinfo:
         docs_command(Path("/does/not/matter"), "127.0.0.1", 8000, build=True)
-    assert 'pip install -e ".[docs]"' in str(excinfo.value)
+    return str(excinfo.value)
 
 
-def test_the_hint_from_the_wheel_names_the_repository(monkeypatch):
-    from liberaqt.cli import PACKAGED_DOCS
+def test_the_hint_runs_the_interpreter_that_is_running(monkeypatch):
+    """A bare `pip` could belong to another Python entirely; this one cannot."""
+    assert f"{sys.executable} -m pip install" in _missing_hint(monkeypatch).replace('"', "")
 
-    _no_mkdocs(monkeypatch)
+
+def test_the_hint_installs_the_extras_packages_not_liberaqt(monkeypatch):
+    """The hint asks for the extra's own packages, never for liberaqt itself.
+
+    Asking pip for liberaqt[docs] re-cloned the repository: impossible offline, and it replaced
+    a pinned version with main.
+    """
+    hint = _missing_hint(monkeypatch)
+    assert "mkdocs-material" in hint and "mkdocstrings" in hint
+    assert "git+" not in hint
+    assert "liberaqt[docs]" not in hint
+    assert '-e ".[docs]"' not in hint, "installs the user's own project from anywhere else"
+
+
+def test_a_partial_install_names_what_is_missing(monkeypatch):
+    """Plain mkdocs installed for another project reached a raw "Unrecognised theme" error."""
+    monkeypatch.setattr("liberaqt.cli.importlib.util.find_spec",
+                        lambda name: object() if name == "mkdocs" else None)
     with pytest.raises(LiberaQtError) as excinfo:
-        docs_command(PACKAGED_DOCS, "127.0.0.1", 8000, build=True)
-    assert "git+https://github.com/sargis2000/LiberaQt.git" in str(excinfo.value)
+        docs_command(Path("/x"), "127.0.0.1", 8000, build=True)
+    assert "mkdocs-material" in str(excinfo.value)
+    assert "needs mkdocs," not in str(excinfo.value), "mkdocs itself is present"
 
 
 # ------------------------------------------------------------------ the argument shape
@@ -260,7 +299,15 @@ def test_docs_serve_is_a_verb():
 
 
 def test_bare_docs_still_serves():
-    assert _docs_args().action == "serve"
+    """No verb means serve; the default is left unset so an explicit `serve` can be told apart."""
+    args = _docs_args()
+    assert args.action is None and not args.build
+
+
+def test_serve_and_build_together_are_refused(capsys):
+    """`serve --build` used to build and exit 0, silently ignoring the explicit serve."""
+    assert cli.main(["docs", "serve", "--build"]) == 2
+    assert "opposite" in capsys.readouterr().out
 
 
 def test_the_build_flag_still_works():
@@ -277,36 +324,182 @@ def test_an_unknown_verb_is_rejected_with_the_choices(capsys):
 # ------------------------------------------------------------------ not erasing the user's work
 
 
-def test_a_directory_of_the_users_is_not_erased(tmp_path):
+@pytest.fixture
+def elsewhere(tmp_path, monkeypatch):
+    """Stand somewhere harmless, so the refusals for the working directory do not fire."""
+    here = tmp_path / "cwd"
+    here.mkdir()
+    monkeypatch.chdir(here)
+    return tmp_path
+
+
+def test_a_directory_of_the_users_is_not_erased(elsewhere):
     """Mkdocs cleans its destination, so a `site/` holding anything else is a refusal."""
-    site = tmp_path / "site"
+    site = elsewhere / "site"
     site.mkdir()
     (site / "NOTES.txt").write_text("my precious notes")
 
     with pytest.raises(LiberaQtError) as excinfo:
-        check_site_dir_is_disposable(site, explicit=False)
+        check_site_dir_is_disposable(site)
     assert str(site) in str(excinfo.value)
     assert "--site-dir" in str(excinfo.value)
 
 
-def test_a_previous_build_is_overwritten_without_complaint(tmp_path):
-    site = tmp_path / "site"
+def test_a_stray_404_does_not_make_a_directory_disposable(elsewhere):
+    """Any folder holding a 404.html passed, and mkdocs erased everything else in it."""
+    site = elsewhere / "site"
+    (site / "photos").mkdir(parents=True)
+    (site / "404.html").write_text("x")
+    (site / "notes.txt").write_text("precious")
+    (site / "photos" / "precious1.txt").write_text("precious")
+    with pytest.raises(LiberaQtError):
+        check_site_dir_is_disposable(site)
+
+
+def test_a_real_old_build_with_the_users_notes_in_it_is_refused(elsewhere):
+    site = elsewhere / "site"
+    site.mkdir()
+    for name in ("index.html", "404.html", "sitemap.xml", "my-notes.txt"):
+        (site / name).write_text("x")
+    with pytest.raises(LiberaQtError):
+        check_site_dir_is_disposable(site)
+
+
+def test_a_site_this_command_built_is_replaced_without_complaint(elsewhere):
+    site = elsewhere / "site"
     site.mkdir()
     (site / "index.html").write_text("<h1>old</h1>")
-    (site / "404.html").write_text("<h1>gone</h1>")
+    (site / SITE_STAMP).write_text("")
+    check_site_dir_is_disposable(site)
 
-    check_site_dir_is_disposable(site, explicit=False)
+
+def test_naming_the_directory_is_not_consent(elsewhere):
+    """`--site-dir .` in a project erased every visible file in it and exited 0."""
+    project_dir = elsewhere / "cwd"
+    (project_dir / "README.md").write_text("mine")
+    (project_dir / "src").mkdir()
+    with pytest.raises(LiberaQtError):
+        check_site_dir_is_disposable(project_dir)
 
 
-def test_naming_the_directory_is_consent(tmp_path):
-    site = tmp_path / "site"
+def test_force_is_consent(elsewhere):
+    site = elsewhere / "site"
     site.mkdir()
-    (site / "NOTES.txt").write_text("my precious notes")
+    (site / "NOTES.txt").write_text("disposable after all")
+    check_site_dir_is_disposable(site, force=True)
 
-    check_site_dir_is_disposable(site, explicit=True)
+
+@pytest.mark.parametrize("where", ["home", "root", "parent"])
+def test_some_directories_are_never_built_into_even_with_force(elsewhere, where):
+    target = {
+        "home": Path.home(),
+        "root": Path(Path.cwd().anchor),
+        "parent": Path.cwd().parent,
+    }[where]
+    with pytest.raises(LiberaQtError, match="refusing"):
+        check_site_dir_is_disposable(target, force=True)
 
 
-def test_an_empty_or_absent_directory_is_fine(tmp_path):
-    check_site_dir_is_disposable(tmp_path / "nothing-here", explicit=False)
-    (tmp_path / "empty").mkdir()
-    check_site_dir_is_disposable(tmp_path / "empty", explicit=False)
+def test_a_file_where_the_site_would_go_is_named(elsewhere):
+    (elsewhere / "site").write_text("not a directory")
+    with pytest.raises(LiberaQtError, match="is a file"):
+        check_site_dir_is_disposable(elsewhere / "site")
+
+
+def test_hidden_files_alone_do_not_block_a_build(elsewhere):
+    """Mkdocs keeps dotfiles when it cleans, so a lone .keep is not at risk."""
+    site = elsewhere / "site"
+    site.mkdir()
+    (site / ".keep").write_text("")
+    check_site_dir_is_disposable(site)
+
+
+def test_a_link_is_judged_by_what_it_points_at(elsewhere):
+    """Through a junction, the files erased used to live outside the working tree entirely."""
+    real = elsewhere / "somewhere-else"
+    real.mkdir()
+    (real / "404.html").write_text("x")
+    (real / "precious-b.txt").write_text("precious")
+    link = elsewhere / "cwd" / "site"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except OSError:
+        pytest.skip("creating a symlink needs Developer Mode or admin rights here")
+    with pytest.raises(LiberaQtError) as excinfo:
+        check_site_dir_is_disposable(link)
+    assert str(real.resolve()) in str(excinfo.value), "the message must name the real target"
+
+
+def test_an_empty_or_absent_directory_is_fine(elsewhere):
+    check_site_dir_is_disposable(elsewhere / "nothing-here")
+    (elsewhere / "empty").mkdir()
+    check_site_dir_is_disposable(elsewhere / "empty")
+
+
+# ------------------------------------------------------------------ whose documentation
+
+
+def test_someone_elses_mkdocs_project_is_not_taken_for_the_checkout(tmp_path, monkeypatch):
+    """A user's own mkdocs.yml was served, and built, as LiberaQT's documentation."""
+    theirs = tmp_path / "theirs"
+    theirs.mkdir()
+    (theirs / "mkdocs.yml").write_text("site_name: My Own Product\n")
+    packaged = tmp_path / "packaged"
+    packaged.mkdir()
+    (packaged / "mkdocs.yml").write_text("site_name: LiberaQT\n")
+    monkeypatch.chdir(theirs)
+    monkeypatch.setattr("liberaqt.cli.CHECKOUT_DOCS", tmp_path / "nowhere")
+    monkeypatch.setattr("liberaqt.cli.PACKAGED_DOCS", packaged)
+    assert docs_root() == packaged
+
+
+def test_the_checkout_is_found_from_inside_it(tmp_path, monkeypatch):
+    """From docs/ the checkout was missed, and a site was built into the documentation sources."""
+    checkout = _make_checkout(tmp_path / "checkout")
+    monkeypatch.chdir(checkout / "docs")
+    monkeypatch.setattr("liberaqt.cli.CHECKOUT_DOCS", tmp_path / "nowhere")
+    assert docs_root() == checkout.resolve()
+
+
+def test_an_explicit_source_that_is_a_file_says_so(project):
+    with pytest.raises(LiberaQtError, match="is a file"):
+        docs_root(str(project / "mkdocs.yml"))
+
+
+def test_an_explicit_source_that_does_not_exist_says_so(tmp_path):
+    with pytest.raises(LiberaQtError, match="does not exist"):
+        docs_root(str(tmp_path / "missing"))
+
+
+# ------------------------------------------------------------------ addresses
+
+
+@pytest.mark.parametrize("host, shown", [
+    ("0.0.0.0", "localhost"),
+    ("::", "localhost"),
+    ("::1", "[::1]"),
+    ("127.0.0.1", "127.0.0.1"),
+])
+def test_the_printed_address_can_be_opened(project, host, shown):
+    """`http://::1:9002/` is not a URL, and 0.0.0.0 is a bind address, not a destination."""
+    assert docs_url(project, host, 9002, with_prefix=False) == f"http://{shown}:9002/"
+
+
+# ------------------------------------------------------------------ the stamp
+
+
+def test_a_successful_build_stamps_its_site(project, monkeypatch, tmp_path):
+    """The stamp is what makes the next build, and the fallback server, trust the directory."""
+    _with_mkdocs(monkeypatch)
+    out = tmp_path / "out"
+    monkeypatch.setattr("liberaqt.cli.subprocess.call", lambda *a, **k: out.mkdir() or 0)
+    assert cli.main(["docs", "build", "--source", str(project), "--site-dir", str(out)]) == 0
+    assert (out / SITE_STAMP).is_file()
+
+
+def test_a_failed_build_is_not_stamped(project, monkeypatch, tmp_path):
+    _with_mkdocs(monkeypatch)
+    out = tmp_path / "out"
+    monkeypatch.setattr("liberaqt.cli.subprocess.call", lambda *a, **k: out.mkdir() or 1)
+    assert cli.main(["docs", "build", "--source", str(project), "--site-dir", str(out)]) == 1
+    assert not (out / SITE_STAMP).exists()

@@ -29,14 +29,41 @@ def test_no_two_test_modules_share_a_basename():
     assert not clashes, f"test modules share a basename: {clashes}"
 
 
-def test_every_live_test_lives_under_a_categorised_directory():
-    """tests/conftest.py applies live/qt_app/libero from the directory.
+#: The only directories a test module may live in. Each is what tests/conftest.py knows how to
+#: mark, and what CI and the live-suite gate know how to treat.
+CATEGORISED = ("unit", "e2e/qt", "e2e/libero")
 
-    A live test dropped straight into tests/e2e/ would get `live` but neither application marker,
-    so `-m libero` and `-m qt_app` would quietly miss it.
+
+def test_every_test_lives_in_a_categorised_directory():
+    """tests/conftest.py applies live/qt_app/libero from the directory, and CI runs tests/unit.
+
+    A module anywhere else falls through the gaps, each a different way. Straight in tests/e2e/,
+    it is `live` but neither `qt_app` nor `libero`, so `-m libero` quietly misses it; in a new
+    tests/e2e/designer/, the same. In tests/ or a new tests/integration/, it has no markers at all
+    and CI -- which runs tests/unit -- never runs it. This checked only the first of those.
     """
-    stray = [
+    stray = sorted(
         path.relative_to(TESTS).as_posix()
-        for path in (TESTS / "e2e").glob("test_*.py")
+        for path in TESTS.rglob("test_*.py")
+        if "__pycache__" not in path.parts
+        and path.parent.relative_to(TESTS).as_posix() not in CATEGORISED
+    )
+    assert not stray, (
+        f"test modules must live in one of tests/{{{', '.join(CATEGORISED)}}}, found: {stray}"
+    )
+
+
+def test_every_libero_module_carries_the_consent_backstop():
+    """The gate lives in a conftest, and `--noconftest` switches every conftest off.
+
+    Each Libero module therefore refuses to start Libero on its own unless the gate recorded
+    consent for it -- module-scoped and autouse, so it runs before any fixture that launches the
+    application. A new Libero module without it would be the one door `--noconftest` opens.
+    """
+    missing = [
+        path.name
+        for path in sorted((TESTS / "e2e" / "libero").glob("test_*.py"))
+        if '@pytest.fixture(scope="module", autouse=True)\ndef _asked_for_by_path(request):'
+        not in path.read_text(encoding="utf-8")
     ]
-    assert not stray, f"live tests must go in tests/e2e/qt or tests/e2e/libero, found: {stray}"
+    assert not missing, f"Libero modules without the consent backstop: {missing}"

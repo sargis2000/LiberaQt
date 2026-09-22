@@ -3,8 +3,7 @@
 Modern UI automation for **Qt desktop applications**, scoped narrowly on purpose: Python as
 the only test language, Qt 5.15 and 6.7, Windows and Linux, QWidget and QML.
 
-Qt 6.5 works too: the Qt suites pass against 6.5.3 and 6.7.3 alike. Pick which one a run
-drives with `--liberaqt-qt-bin`.
+Qt 6.5 works too: LiberaQT's own live suites pass against 6.5.3 and 6.7.3 alike.
 
 ```python
 from liberaqt import liberaqt, expect
