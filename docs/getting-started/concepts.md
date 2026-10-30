@@ -19,6 +19,7 @@ QT_QPA_GENERIC_PLUGINS=<one key per installed agent>,liberaqt   # e.g. liberaqt_
 LIBERAQT_TOKEN=<per-launch random token>
 LIBERAQT_PORT=0                             # 0 => bind an ephemeral port
 LIBERAQT_PORT_DIR=<temp dir>                # each agent writes <pid>.port here
+LD_LIBRARY_PATH=<the application's Qt lib dir>   # Linux only, so the agent finds that same Qt
 ```
 
 The agent stays completely dormant unless `LIBERAQT_TOKEN` is set, so an application that ships

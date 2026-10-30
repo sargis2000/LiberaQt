@@ -342,7 +342,17 @@ LIBERAQT_TOKEN=<per-launch random token>
 LIBERAQT_PORT=0                 # 0 => bind an ephemeral port
 LIBERAQT_PORT_DIR=<temp dir>    # each agent writes <pid>.port here; the launcher polls the dir
 LIBERAQT_RECORD=1               # only in recorder mode
+LD_LIBRARY_PATH=<app's Qt lib dir>   # Linux only, from ldd: see below
 ```
+
+**On Linux the agent's own Qt dependencies need `LD_LIBRARY_PATH`.** The agent links QtNetwork
+(and QtQuick/QtQml where the kit has them), which the application may never load itself, and a
+`dlopen`'d plugin does not inherit the executable's `RUNPATH`. With a Qt outside the system path
+(any online-installer or aqt kit) that dependency was unresolvable and Qt dropped the agent in
+silence; `launch()` now prepends the directory `ldd` resolves the application's QtCore from
+(`agent_registry.qt_library_dir`). Linux detection also had to learn that `ldd` prints the soname
+(`libQt6Core.so.6`, major only): the version comes from the file it resolves to, or its build
+stamp. Both were invisible until CI smoke-tested a Linux agent; neither shows on Windows.
 
 Getting injection wrong fails silently — no agent, no port file, no error — so these rules are
 enforced in code rather than left to the user. `agent-loading` has why each exists and how to

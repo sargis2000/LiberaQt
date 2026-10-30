@@ -120,6 +120,7 @@ QT_PLUGIN_PATH=<every installed agent's plugins dir>
 LIBERAQT_PORT=0                 # 0 => bind an ephemeral port
 LIBERAQT_PORT_DIR=<temp dir>    # each agent writes <pid>.port here
 LIBERAQT_TOKEN=<random>
+LD_LIBRARY_PATH=<app's Qt lib dir>   # Linux only: the agent's QtNetwork resolves against it
 ```
 
 Each agent build advertises a key naming its Qt version, pointer size and compiler

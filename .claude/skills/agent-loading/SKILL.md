@@ -41,6 +41,22 @@ than by reading error messages that do not exist.
    one. A child's output does *not* reach `app.logs`, because it does not inherit the parent's
    pipe, so read it from the child itself.
 
+## Linux: two ways it failed before the agent was involved
+
+Both were invisible until CI smoke-tested a Linux agent, and neither can happen on Windows:
+
+- **"Qt unknown".** `ldd` lists QtCore by soname, `libQt6Core.so.6`, which carries the major
+  version only, so `detect_qt_version()` matched nothing and every Linux application was
+  refused. It now follows the soname to the real file (`libQt6Core.so.6.7.2`) or reads that
+  file's build stamp, which also supplies the toolchain `resolve()` matches on.
+- **An agent that cannot resolve its own Qt.** The agent links QtNetwork (and QtQuick/QtQml
+  where available); an application that never loads those leaves the dependency to the dynamic
+  linker, and a `dlopen`'d plugin does not inherit the executable's `RUNPATH`. With Qt outside
+  the system path -- any online-installer or aqt kit -- Qt dropped the plugin in silence.
+  `launch()` now prepends `agent_registry.qt_library_dir(exe)` to `LD_LIBRARY_PATH`. On a
+  machine where it still fails, `ldd <agent>/plugins/generic/libliberaqt.so` names the missing
+  library.
+
 ## How `resolve()` picks an agent
 
 The rules live in `agent_registry.resolve()`. Each one is there because its absence produced a
