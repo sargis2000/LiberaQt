@@ -1,6 +1,6 @@
 ---
 name: agent-release
-description: Build, install, version, update and publish liberaqt agent binaries - the per-ABI CMake recipes for this machine (Linux, Windows MinGW for Qt 6.x, Windows MSVC 32-bit for Libero's Qt 5.15), liberaqt agents kits/build/install/update/list and what each update state means, the liberaqt-agent.json manifest and its configure-time revision, staged installs, the release archive URLs, and the CI matrix that builds ten ABIs and publishes eight on a v* tag. Use whenever you need to rebuild or reinstall an agent after changing agent/ C++, get a fix onto other machines, edit agent_build.py, agent_install.py, the agents commands in cli.py or the agent job in .github/workflows/ci.yml, or work out why an installed agent shows as behind, damaged, "local build", "not managed" or "cannot tell".
+description: Build, install, version, update and publish liberaqt agent binaries - the per-ABI CMake recipes for this machine (Linux, Windows MinGW for Qt 6.x, Windows MSVC 32-bit for Libero's Qt 5.15), liberaqt agents kits/build/install/update/list and what each update state means, the liberaqt-agent.json manifest and its configure-time revision, staged installs, the release archive URLs, and the CI matrix that builds and smoke-tests eleven ABIs and publishes them all on a v* tag. Use whenever you need to rebuild or reinstall an agent after changing agent/ C++, get a fix onto other machines, edit agent_build.py, agent_install.py, the agents commands in cli.py or the agent job in .github/workflows/ci.yml, or work out why an installed agent shows as behind, damaged, "local build", "not managed" or "cannot tell".
 ---
 
 # Building and shipping agents
@@ -145,12 +145,25 @@ Tag a release. Pushing a `v*` tag runs the `publish` job in `.github/workflows/c
 attaches the archives to the release, and everyone else's `liberaqt agents update` picks them up.
 Pushing a tag is outward-facing, so confirm with the user first.
 
-The `agent` job builds ten ABIs and packages eight as `<tag>.zip` plus `.sha256`. The two it
-compiles but never ships are Qt 6.5 and 6.7 MinGW. Those kits were built with GCC 11.2 (their
-`mkspecs/qconfig.pri` says so), and aqt offers no MinGW 11.2, only 8.1, 9.0 and 13.1. An agent
-built with another GCC links a different libstdc++ than the application loads, so those two
-published agents come from a matching local build instead.
+The `agent` job builds eleven ABIs -- Linux gcc for 5.15, 6.5 and 6.7; Windows MSVC 5.15 x86
+and x86_64, 6.5 and 6.7; Windows MinGW 5.15 x86 and x86_64, 6.5 and 6.7 -- and packages every
+one as `<tag>.zip` plus `.sha256`. Each leg first runs `.github/scripts/agent_smoke.py`, which
+launches the kit's own Qt Assistant with the fresh agent and fails unless it attaches under the
+plugin key the tag implies and resolves selectors, so an agent that would not load is never
+uploaded. Nothing else of `agent/src/` is exercised in CI; input and waits are `tests/e2e/` only.
+
+Qt 6.5 and 6.7 MinGW were built with GCC 11.2 (their `mkspecs/qconfig.pri` says so), and an
+agent built with another GCC links a different libstdc++ than the application loads. aqt offers
+11.2 under a misleading name, `tools_mingw90` / `qt.tools.win64_mingw900` ("MinGW 11.2.0
+64-bit": the 9 is mingw-w64's runtime version). That was once read as GCC 9, and those two
+agents were shipped from local builds; CI now builds them with the right compiler.
+
+The current release, `agents-77c72cc`, predates this: it was uploaded by hand from this
+machine's nine local builds, so it has no Linux agents and no Qt 6.5 MSVC one. Because
+`releases/latest` follows the newest release, the next `v*` release replaces it as what
+`agents install` downloads, so that release must carry every tag users rely on. The two local
+extras (`qt5.15-windows-x86_64-msvc2015`, `qt6.7-windows-x86_64-msvc2022`) are covered by the
+msvc2019 builds of the same Qt, since MSVC 2015-2022 are one family.
 
 The matrix's `arch` and tool names are checked against `aqt list-qt` and `aqt list-tool`. The
 first version guessed them and failed every Qt 6 leg. Check the same way before adding a leg.
-That compile check is all CI says about the agent: no line of `agent/src/` executes in CI.

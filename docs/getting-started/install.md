@@ -144,9 +144,13 @@ on 64-bit Windows `--qt 5.15 --compiler msvc2019` asks for the x86_64 agent, whi
 application cannot load. On Windows `--compiler` is required, since no Windows agent is built
 with gcc.
 
-!!! note "There is no public download location yet"
-    Point `LIBERAQT_AGENT_BASE_URL` at any location holding `<tag>.zip` — a releases page, an
-    internal file share, or a directory on disk — or pass one archive directly:
+!!! note "Where agents are downloaded from"
+    By default from the newest release on GitHub,
+    `https://github.com/sargis2000/LiberaQt/releases/latest/download/<tag>.zip`, which carries
+    Linux (gcc) and Windows (MSVC and MinGW) builds for Qt 5.15, 6.5 and 6.7, plus 32-bit
+    Windows builds for Qt 5.15.
+    For an internal mirror, point `LIBERAQT_AGENT_BASE_URL` at any location holding `<tag>.zip`
+    — a releases page, a file share, or a directory on disk — or pass one archive directly:
 
     ```bash
     export LIBERAQT_AGENT_BASE_URL=https://example.internal/liberaqt-agents

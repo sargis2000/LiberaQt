@@ -100,8 +100,11 @@ live test cannot forget one), `writes_disk` and `slow` are declared per file.
 
 **CI runs `tests/unit` only** — pure-Python unit tests, no Qt, no agent. A green run there says
 the client parses selectors and maps errors correctly and says *nothing* about whether a click
-lands. Not one line of `agent/src/` executes. CI additionally builds the agent on ten ABIs, which
-is a compile check and nothing more, plus one job asserting the wheel still carries the docs.
+lands. CI additionally builds the agent on eleven ABIs and smoke-tests each one
+(`.github/scripts/agent_smoke.py`: the kit's own Qt Assistant, launched with the fresh agent, must
+attach under the right plugin key and resolve selectors), plus one job asserting the wheel still
+carries the docs. That proves an agent *loads* on every ABI; it says nothing about input, waits or
+selectors in depth, which only `tests/e2e/` exercises.
 
 **The live suites are opted into by path, and only by path.** `pytest` and `pytest tests/unit`
 never collect them; `pytest tests/` collects and deselects all 103, and says which command asks
@@ -368,7 +371,7 @@ Qt, plugin key, compiler, bitness, protocol). The revision is fixed at **configu
 bare `cmake --build` after new commits keeps the old one; `liberaqt agents build` reconfigures
 every time. A fix reaches other machines by release: pushing a `v*` tag runs CI's `publish` job,
 and everyone's `liberaqt agents update` picks it up. `agent-release` has the update states, the
-staged install, and the two ABIs CI builds but never ships.
+staged install and the release procedure.
 
 The agent is an RCE surface by design: loopback only, token required, one client, dormant without
 the token. It must never ship in a production build.
