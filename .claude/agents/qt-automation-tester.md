@@ -43,6 +43,16 @@ the real one: read `site/reference/api/index.html` if it has been built, or run
 **that is your first finding** -- it means the only readable API description in the project is
 the guide pages.
 
+**The Claude Code plugin is documentation too, and a second audience reads it.**
+`plugins/liberaqt/` is what a LiberaQT user's own Claude loads to write their tests:
+`skills/write-tests/` (with `references/api.md` and `references/limitations.md`),
+`skills/troubleshoot/`, and the `explorer` and `test-author` agents. Write your first attempt from
+`docs/` alone, as above. Then read the plugin the way a user's Claude would, and judge it with the
+same verdicts: anything it states that your scenarios contradicted is a **documentation defect**
+in the plugin, and anything it leaves out that would have saved you the stumble is a finding too.
+`tests/unit/test_claude_plugin.py` only proves the names it uses exist; it cannot tell whether
+the advice is right.
+
 ## Targets on this machine
 
 Verified working: Qt 6.7.3 / MinGW / x86_64, with a matching agent installed.
@@ -112,64 +122,86 @@ Aim at what a real suite has to do, not at what is easy to assert:
 
 ## Known rough ground, already measured
 
-Do not re-derive these; do confirm them if your scenario touches one, and go deeper than the
-one-liner. They are good places to aim.
+Measured at `5b60df0` (2026-10-04) against Assistant and qmleasing 6.7.3, with agents built at
+`77c72cc`. Do not re-derive these; do confirm them if your scenario touches one, and go deeper
+than the one-liner. When something here has been fixed, say so in your report: this list is only
+useful while it is true.
 
-- `app.windows` is a **property**, not a method. `app.windows()` raises `TypeError: 'list' object
-  is not callable` -- an easy and unhelpful first stumble.
-- **QML input is partly supported, not uniformly unsupported as the docs say.** On qmleasing
-  6.7.3, `click`/`hover`/`wheel`/`highlight` raise `UnsupportedOperationError`, but `type()`,
-  `press()` and `Window.keyboard.type()` return normally. Discovery and property reads work.
-- `Locator.geometry` returns an **empty tuple** for a `QQuickItem`, though it is documented as
-  `(x, y, w, h)`. `Window.screenshot()` on a Quick window raises `[unsupported] nothing to grab`.
-- **Backslashes are stripped by the client-side selector lexer**, so `[text~='^\w+$']` reaches
-  the agent as `^w+$` and matches nothing, while `[text~='^Ind.x$']` matches. Every regex
-  character class is silently broken.
-- `filter(has_not=...)` is a **no-op**: the client emits `__has_not` and the engine skips every
-  `__`-prefixed attribute.
-- Selector attributes `role`, `path` and `qmlId` are documented but match **zero** objects.
-- `win.locator("X", strict=False)` raises `InvalidSelectorError` -- there is no public path to
-  the `strict=False` that `docs/SELECTORS.md` offers.
-- **Menus are exempt from auto-wait.** `Window.menu(path)` takes no `timeout=` and does not
-  retry, so a not-yet-populated entry raises `ObjectNotFoundError` immediately.
-- There is **no API for listing** menu entries, tab captions or combo entries. The agent's error
-  text is the only enumeration available.
-- Failure screenshots and `liberaqt-trace/` are attached only by the function-scoped `app`
-  fixture. The `app_session` fixture the docs recommend for speed gets neither.
-- `docs/guide/actions.md` says `fill()` "clears, then types"; everywhere else says it writes the
-  property and never types. One of them is wrong.
-- README tells you to put `pytest_plugins = ["liberaqt.pytest_plugin"]` in a conftest; doing that
-  aborts pytest with `ValueError: Plugin already registered under a different name`.
-- The agent reports its real command set in the handshake: `app.capabilities["commands"]` (36 on
-  this machine) and `app.supports(...)`. Six `Cmd` names are unimplemented and raise
-  `UnsupportedOperationError` -- the QML `quick.*` four, and `record.start`/`record.stop`.
+**Open defects:**
 
-Found on the first outing and **not yet fixed**, all measured against Assistant 6.7.3:
+- **`app.screenshot()` raises `[unsupported] nothing to grab` whenever the application is not the
+  active one**, because `screen.grab` with no handle grabs `QApplication::activeWindow()`.
+  `win.screenshot()` works. The pytest plugin's failure screenshot uses the former, so with
+  several applications running, or after a click elsewhere, `liberaqt-trace/` gets no PNG, only a
+  warning, although `docs/guide/pytest.md` promises one for every running application.
+- **A screenshot through a closed dialog's `Window` silently grabs a different window.**
+  `Screenshot::grab` resolves with `resolveOrNull`, so a dead handle becomes "no handle" and falls
+  through to `activeWindow()`. This is the `resolveRoot` bug class, missed in this one place.
+  Measured: `dlg.screenshot()` after `dlg.close()` returned the main window's 1536x864 image.
+- **Waiting for idle never waits for animations.** `IdleTracker::hasRunningAnimations()` is a
+  `TODO(m2)` that returns `false`. `docs/getting-started/concepts.md` and `docs/guide/waiting.md`
+  both say "animations done".
+- **QML input is partly supported, and the docs say it is not supported at all.**
+  `click`/`hover`/`highlight` raise `UnsupportedOperationError`, but `type()`, `press()` and
+  `Window.keyboard.type()` at a Quick item or window return normally and **type into the
+  application's widget window instead**: `keyTarget()` falls back to `implicitKeyWindow()`, which
+  only knows widget windows. Measured on qmleasing 6.7.3 and 5.15.0 MSVC x86, typing `9` at a
+  `QQuickText` turned the shell's spin box from 500 into 9500. F11's "refuse to type at a
+  non-focusable target" check is widget-only, so it never sees this. `Locator.geometry` is `()`
+  for a Quick item, `Window.screenshot()` on a Quick window raises `nothing to grab`, and a
+  screenshot of a Quick *item* returns the active window's image.
+- **`expect(win)` has a different, much smaller set of assertions.** `WindowAssertions` has only
+  `to_have_title` and `to_be_active`, and no `not_`, so `expect(dlg).not_.to_be_visible()` is an
+  `AttributeError`. After the dialog closes, `dlg.exists` *raises* `StaleObjectError` instead of
+  returning `False`. There is no documented way to assert that a window has closed; waiting on
+  `[w.title for w in app.windows]` works.
+- **A backslash in a quoted selector value is an escape character, and that is documented
+  nowhere.** `[text~='^\w+$']` reaches the agent as `^w+$` and matches nothing. Doubling the
+  backslash works.
+- **`filter(has_not=...)` is a no-op**, and `docs/guide/selectors.md` still demonstrates it. The
+  client emits `__has_not`; `matchesStep` skips every `__`-prefixed attribute.
+- **Selector attributes `role`, `path` and `qmlId` are documented in `docs/SELECTORS.md` but
+  match zero objects.** Every key other than `text` and `objectName` is read with
+  `QObject::property()`.
+- **The `LaunchError` hint for "did not report a port" recommends "LD_PRELOAD mode" and "the
+  in-app embed API"**, and neither is implemented.
+- **The custom-fixture pattern in `docs/guide/pytest.md` builds a fresh `LiberaQt()`**, which is
+  not in `config.stash`, so tests using it get no failure diagnostics and ignore
+  `--liberaqt-timeout` and `--liberaqt-slowmo`. Building on the `liberaqt` fixture keeps all
+  three.
+- **A dialog reached by navigation can only be inspected through a private attribute:**
+  `suggest_all(dlg.tree(), resolver_for(app._session, dlg.resolve()))`. `liberaqt inspect` sees
+  startup windows only.
 
-- **A search rooted at a destroyed window silently searches the whole application.**
-  `dispatcher.cpp:200` cannot tell "no root given" from "root given but dead" -- both arrive as
-  `nullptr`, which means search everywhere. `dlg.title` correctly raises `StaleObjectError`; only
-  the search path widens instead. `object.tree` has the same bug at `dispatcher.cpp:330`.
-- **A per-assertion `timeout=` is ignored whenever the locator does not resolve.** The probe
-  reaches `resolve()`, which uses the *session* timeout, so one poll blocks for the session
-  default before the outer deadline is consulted. Affects every negative assertion.
-- **`expect()` discards the exception** (`expect.py:80`) and prints `actual: '<TimeoutError>'`,
-  so near-miss lists and ambiguity dumps -- the best diagnostics in the product -- never reach
-  the API the docs tell you to assert with. `Locator.__repr__` also drops the scope.
-- **`to_be_hidden()` is not the opposite of `to_be_visible()`** for a destroyed object:
-  `not_.to_be_visible()` passes, `to_be_hidden()` fails. `to_have_count(0)` is the reliable form.
-- **`fill()` refuses a widget on a non-current tab page**, contradicting its own docstring --
-  visibility is checked before the synthetic escape in `widget_backend.cpp:255`.
-- **`to_records()` column keys are 1-based**; `cell(row, column)` is 0-based. Qt's default
-  `headerData` returns `section + 1`, which defeats the client's fallback.
-- **`cell()` does not range-check an integer column** -- `cell(0, 99).text` is `''`, not an error,
-  while `row(index=99)` reports beautifully.
-- **`type()` does not verify it typed into the locator's target.** Aimed at a `QStatusBar` it
-  silently typed into whatever had focus, and reported success.
-- **Near misses are empty exactly when the class name is the typo**, because `nearMisses`
-  relaxes everything except the type.
-- Item views (`row`/`item`/`cell`) do not auto-wait and take no `timeout=`, like menus.
-- `max_rows` and `headers` exist on the wire and are unreachable from Python.
+**Deliberate, documented, still worth judging as design:**
+
+- `app.windows` is a **property**: `app.windows()` raises `TypeError: 'list' object is not
+  callable`.
+- Menus take no `timeout=` and do not retry (`docs/guide/waiting.md` explains why), and there is
+  no API that lists menu entries, tab captions or combo box entries. The error text is the only
+  enumeration available.
+- The agent reports its real command set: `app.capabilities["commands"]` (36 here) and
+  `app.supports(...)`. The six unregistered commands are the four `quick.*` and
+  `record.start`/`record.stop`, so `evaluate()` and `liberaqt record` fail immediately.
+
+**Fixed, so treat a recurrence as a regression.** Every one of these was found by an earlier run
+of this agent, and each is pinned by a test:
+
+- A search rooted at a destroyed window widened to the whole application (`resolveRoot`).
+- A per-assertion `timeout=` was ignored when the locator did not resolve.
+- `expect()` reduced failures to `actual: '<TimeoutError>'`, discarding near misses.
+- `to_be_hidden()` and `not_.to_be_visible()` disagreed about a destroyed object.
+- `Locator.exists` lacked `@property`, so `if loc.exists:` was always true.
+- `fill()` refused a field on a tab page that was not shown (F6).
+- `to_records()` keys were 1-based while `cell()` is 0-based (F7).
+- `max_rows` and `headers` were unreachable from Python (F8).
+- `row()`, `item()` and `cell()` did not retry (F9).
+- `cell()` did not range-check an integer column (F10).
+- `type()` at a widget that cannot take focus typed into something else (F11), for widgets only;
+  see QML above.
+- Near misses were empty exactly when the class name was the typo (F12).
+- Earlier documentation defects: `strict=False` advertised, `fill()` described as typing, README
+  recommending `pytest_plugins`, and `app_session` failures saving no diagnostics.
 
 ## Distinguish these three, every time
 

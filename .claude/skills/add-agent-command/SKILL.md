@@ -25,6 +25,16 @@ The authoritative answer for a *given build* is the handshake, not this script:
 `app.capabilities["commands"]` and `app.supports(Cmd.X)`. An agent compiled without Qt Quick
 registers fewer.
 
+The six are much further apart than "unregistered" suggests. Measured at `5b60df0`:
+
+| Command | C++ state | What finishing it takes |
+|---|---|---|
+| `quick.evaluate` | **written**: `QuickBackend::evaluate` builds a `QQmlExpression` in the object's context | one `registerCommand` line, guarded by `LIBERAQT_HAVE_QUICK`, and a live test |
+| `quick.list_view_item` | stub that throws `unsupported` (`quick_backend.cpp`, `TODO(m2)`) | `positionViewAtIndex`, then wait for the delegate; asynchronous, so `registerAsyncCommand` |
+| `quick.find_by_id` | helper only: `QuickBackend::qmlId` resolves an id through its `QQmlContext` | a handler that walks with `SelectorEngine::visualChildren` and matches on it |
+| `quick.wait_animations` | nothing; `IdleTracker::hasRunningAnimations()` is also a stub returning `false` | the animation tracking itself, which `sync.wait_idle` needs too |
+| `record.start` / `record.stop` | `Recorder` has `start`/`stop`/`eventFilter`; nothing calls them | registration, emitting `record.action`, plus two `TODO(m4)`s in `recorder.cpp`: typing on `FocusOut`, and selector uniqueness |
+
 ## Order of work
 
 1. **Handler in `agent/src/dispatcher.cpp`**, on the GUI thread.
@@ -33,6 +43,12 @@ registers fewer.
 4. **Entry in `docs/PROTOCOL.md`.**
 5. **A test in `tests/e2e/`** driving it against a real application.
 6. **Rebuild and install the agent**, then verify by hand.
+7. **Tell the users' Claude.** If the command changes what users can do, update
+   `plugins/liberaqt/`: delete the entry in `skills/write-tests/references/limitations.md` whose
+   "Fixed yet?" check now passes, add the call to `references/api.md`, and bump `version` in
+   `plugins/liberaqt/.claude-plugin/plugin.json`. Installed copies are pinned to that version, so
+   without the bump nobody receives the change. `pytest tests/unit/test_claude_plugin.py` then
+   checks that every name the plugin uses exists.
 
 ## Pick the right registration helper
 
@@ -75,6 +91,8 @@ cmake -S agent -B build/agent -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.7.3/mingw_64 
 cmake --build build/agent --parallel
 cmake --install build/agent --prefix "$env:LOCALAPPDATA\liberaqt\agents\qt6.7-windows-x86_64-mingw"
 ```
+
+Other ABIs (Linux, MSVC 32-bit for Libero's Qt 5.15) and `liberaqt agents build`: `agent-release`.
 
 Then `liberaqt doctor` -- it checks every installed agent really carries its own plugin key and
 marks a stale build `STALE`. One plugin key cannot serve two ABIs, and getting that wrong fails

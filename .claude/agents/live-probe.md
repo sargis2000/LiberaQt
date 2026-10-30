@@ -40,7 +40,24 @@ with no port file and no error.
 
 `liberaqt inspect <exe>` prints a ranked, uniqueness-checked selector for every object, which is
 usually faster than walking the tree yourself. Uniqueness comes from the same engine the tests
-use, so `unique` means it.
+use, so `unique` means it. `inspect` only sees startup windows; for a dialog you navigated to,
+use the same machinery from your script:
+
+```python
+from liberaqt.suggest import format_table, resolver_for, suggest_all
+
+dlg = app.wait_for_window(title="Preferences", timeout=10)
+print(format_table(suggest_all(dlg.tree(depth=4), resolver_for(app._session, dlg.resolve()))))
+```
+
+## Probe hygiene
+
+- **`timeout=0` on anything you expect to fail**, or each failed probe waits out the session
+  default before it reports.
+- **Report the root cause, not the wrapper.** Walk `while e.__cause__ is not None: e = e.__cause__`
+  and quote the result in full; its message carries the near misses and the hint.
+- **Read state twice when you ask "did it change"**, once before the action and once after,
+  using `expect(...)` for the after, because the change may land a moment later.
 
 ## Things that will mislead you
 
@@ -51,6 +68,17 @@ use, so `unique` means it.
 - **`app.windows` is a property**, not a method.
 - **Object counts in a Quick scene track the window size** -- qmleasing renders 155 objects at
   669px and 355 at 720px. Never report an exact count as a stable fact.
+- **QML input is uneven, and the docs get it wrong.** Measured on qmleasing 6.7.3: `click`,
+  `hover` and `highlight` at a Quick item raise `UnsupportedOperationError`; `type`, `press` and
+  `Window.keyboard.type` at a Quick item or window return normally **and type into the widget
+  window's focused field** (a qmleasing spin box went from 500 to 9500). A screenshot of a Quick
+  item returns the active window's image. `geometry` is `()`.
+- **`app.screenshot()` raises `nothing to grab` when the application is not the active one.**
+  Use `win.screenshot()`.
+- **A closed `Window` raises on every read, `exists` included.** `expect(win)` has no `not_`;
+  check `[w.title for w in app.windows]` instead.
+- **Waiting for idle does not wait for animations** (`hasRunningAnimations()` is a stub), so a
+  geometry read right after an action that starts an animation can catch it halfway.
 - **The agent's own handshake is the truth about what it supports**:
   `app.capabilities["commands"]`, `app.supports(...)`. Do not infer the command set from
   `protocol.Cmd`, which lists six commands no agent registers.

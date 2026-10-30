@@ -13,9 +13,27 @@ exposes the live `QObject` tree over JSON/TCP to a pure-Python client.
 pytest/script (Python) ──JSON/TCP──► liberaqt agent (C++ Qt plugin) ──► QObject tree
 ```
 
-The GitHub remote is `sargis2000/LiberaQt`; everything inside the repo is `liberaqt`. Naming convention: `liberaqt` lowercase for the package, C++ namespace, CMake target,
-plugin key, CLI, config section and trace dir; `LiberaQT` in prose; `LiberaQt` in Python class
-names (`LiberaQtError`); `LIBERAQT_*` for env vars and C++ macros.
+The GitHub remote is `sargis2000/LiberaQt`; everything inside the repo is `liberaqt`. Naming
+convention: `liberaqt` lowercase for the package, C++ namespace, CMake target, plugin key, CLI,
+config section and trace dir; `LiberaQT` in prose; `LiberaQt` in Python class names
+(`LiberaQtError`); `LIBERAQT_*` for env vars and C++ macros.
+
+## Topic skills — load the one for the area you are changing
+
+This file holds the rules every session needs. The depth an area needs, and the measured bug
+behind each of its rules, live in skills under `.claude/skills/`. **Load the skill before changing
+its area, or before answering a question about it**: most rules here exist because a change that
+looked right silently broke something, and only the skill says how.
+
+| Skill | Load it for |
+|---|---|
+| `qml-support` | Qt Quick / QML: what works, what fails silently, `quick_backend.cpp`, qmleasing |
+| `pytest-internals` | `tests/conftest.py`, `tests/e2e/conftest.py`, `pytest_plugin.py`, options, markers, live modules; live tests collected or skipped unexpectedly |
+| `agent-loading` | an agent that never attaches; `launcher.py`, `agent_registry.py`, plugin keys, child processes, a new Qt version, compiler or architecture |
+| `agent-release` | building, installing, updating or publishing agent binaries; the Windows build recipes; `agent_build.py`, `agent_install.py`, the CI agent matrix |
+| `docs-site` | the `liberaqt docs` command, `docs/` in the wheel, `mkdocs.yml`, pages that run as tests |
+| `add-agent-command` | adding or finishing a protocol command, end to end |
+| `fix-finding` | fixing any defect, QA finding or bug report |
 
 ## Project state — read this before planning work
 
@@ -58,47 +76,18 @@ Known gaps, in the order they unblock the most client surface:
 Item views, menus, tabs, the remaining input events, property enumeration and `sync.wait_signal`
 are all implemented; a cell is addressed by the composite handle described in `docs/PROTOCOL.md`.
 
-**QML discovery works; QML *input* does not.** Everything below is measured against `qmleasing`,
-a real Qt application that puts a QWidget shell and a live Quick window in one process, and is
-pinned by `tests/e2e/qt/test_qml_live.py`.
+**QML discovery works; QML *input* does not.** Measured on qmleasing 6.7.3 and pinned by
+`tests/e2e/qt/test_qml_live.py`; `qml-support` has the detail and where to start on input.
 
-* **Locators reach QML objects, and so does `object.tree`.** `QQuickRectangle`, `QQuickText` and
-  QML-defined types (`Button_QMLTYPE_0`) all resolve and their properties read back. Both the
-  engine and the tree walk go through `SelectorEngine::visualChildren`, which steps from a
-  `QQuickWindow` into its `contentItem`.
-
-  This was the long-standing "QML is deferred" impression, and it was three separate bugs rather
-  than a missing feature. `dumpTree` had its own child walk that never made that step, *and*
-  dropped anything that was neither `QWidget` nor `QWindow` (a `QQuickItem` is neither), so the
-  tree reported one bare node where the engine found forty objects — which is why `liberaqt
-  inspect` used to print "no objects found" for a window full of them. `Window.kind` answered
-  `"widget"` for every window in existence, because only `window.list` ever sent `window_type`
-  and `kind` reads `object.info`. And `rootObjects()` enumerated only top-level *windows*, so a
-  rootless search found zero widgets in an application full of them.
-
-* **Input at a Quick item is still unsupported**, and that is the real remaining gap: the input
-  backend is QWidget-only, so clicking or typing at a `QQuickItem` raises `unsupported`.
-  `highlight()` is widget-only for the same reason. The `quick.*` commands are unregistered.
-
-* **Quick support is optional at build time.** `agent/CMakeLists.txt` compiles `quick_backend.cpp`
-  only when `find_package(Qt Quick Qml)` succeeds; without it `LIBERAQT_HAVE_QUICK` is undefined
-  and the Quick splice compiles out entirely. CI's Qt 5.15 legs install no `qtdeclarative`, so
-  those agents have no Quick support at all. Check this before debugging any QML failure.
-
-* **Qt 5.15's Assistant is not a drop-in target for the Qt 6 suites.** Its help viewer is a
-  `QTextBrowser`, not the `QLiteHtmlWidget` Qt 6 uses, so `test_wheel_scrolls_the_help_viewer`
-  fails there — and the wheel does not move that view's scroll bar through *any* target tried
-  (`HelpViewer`, `QTextBrowser`, the viewport). 62 of 63 pass on 5.15; this is a real unexplained
-  gap in 5.15 wheel delivery rather than a selector problem, and it is deliberately left red
-  rather than skipped. 6.5 and 6.7 are the versions the suites are green against.
-
-* **Object counts in a Quick scene track the window size.** qmleasing renders a grid of curve
-  previews: 155 objects at 669px tall, 355 at 720px. Never assert an exact count against it.
-
-One consequence of the `rootObjects()` fix worth knowing: `topLevelWidgets()` means "is a window",
-not "has no owner". A dialog, a menu and a popup are all windows *and* QObject children of the
-widget that owns them, so they are skipped as roots — otherwise their subtrees get walked twice
-and every widget inside is reported two times over.
+* Locators, `object.tree`, `Window.kind` and rootless searches all reach Quick objects, through
+  `SelectorEngine::visualChildren`. Any new tree walk must go through it.
+* `click`/`hover`/`wheel`/`drag_to` and `highlight()` at a Quick item raise `unsupported`.
+  **`type()`/`press()` at one report success and type into the widget window's focused field
+  instead** (measured: a qmleasing spin box went from 500 to 9500), and a screenshot of a Quick
+  item silently returns the active window's image. `geometry` is `()`.
+* **Quick support is optional at build time** (`LIBERAQT_HAVE_QUICK`), and CI's Qt 5.15 agents
+  have none. Check this before debugging any QML failure.
+* Object counts in a Quick scene track the window size. Never assert an exact count.
 
 ## Two suites: `tests/unit` proves the client, `tests/e2e` proves the agent
 
@@ -111,40 +100,15 @@ live test cannot forget one), `writes_disk` and `slow` are declared per file.
 
 **CI runs `tests/unit` only** — pure-Python unit tests, no Qt, no agent. A green run there says
 the client parses selectors and maps errors correctly and says *nothing* about whether a click
-lands. Not one line of `agent/src/` executes. CI additionally builds the agent on four ABIs, which
+lands. Not one line of `agent/src/` executes. CI additionally builds the agent on ten ABIs, which
 is a compile check and nothing more, plus one job asserting the wheel still carries the docs.
 
 **The live suites are opted into by path, and only by path.** `pytest` and `pytest tests/unit`
 never collect them; `pytest tests/` collects and deselects all 103, and says which command asks
-for each part. `tests/conftest.py` enforces it, and `tests/unit/test_live_gate.py` pins it with
-real inner sessions over a miniature tree using the real conftest -- **the first version of this
-gate shipped with five bypasses because nothing tested it**, and the old gate fails 16 of those
-tests. What its rules are, and the hole each one closed:
-
-* **Consent comes from `config.args`, and only when `config.args_source` is `ARGS`.** The first
-  version scanned the raw command line and read every word not starting with `-` as a path --
-  option *values* included -- so `pytest tests/ --ignore tests/e2e/qt`, an *exclusion*, opted the
-  run into all 40 Libero tests (`--ignore=` with an equals sign did not, which is why it hid).
-  `--deselect X`, `--rootdir tests/e2e`, `-p no:cacheprovider` from inside the tree: same hole.
-  `testpaths` and the fallback to the working directory are never consent; `@file`,
-  `PYTEST_ADDOPTS` and `addopts` paths are, since they are positional arguments.
-* **Consent is per test.** A live argument covers only the tests beneath it (a node id covers
-  what it names, and `::test_x` does not cover `test_x_other`). It used to be one yes/no for the
-  run, so `pytest tests/ tests/e2e/qt` got Libero too, and so did a node id that matched nothing.
-* **A marker is never consent**, and the gate runs `trylast` -- after pytest's own `-m`, `-k` and
-  `--deselect` -- while the directory markers are applied in `pytest_itemcollected`, before them.
-  Two implementations of one hook cannot live in one module, which is why marking moved there.
-* **The Libero modules have a backstop**, because `--noconftest` switches the gate off with every
-  other conftest. Each carries a module-scoped autouse `_asked_for_by_path` fixture that skips
-  unless the gate recorded consent for its file in `config._liberaqt_live_consent`. Module-scoped
-  so it runs before the module fixture that launches Libero; a function-scoped one would run
-  after. `test_tree_layout.py` checks every Libero module has it.
-* **The Qt pin is checked in `pytest_collection_finish`, against the final selection.**
-  `--liberaqt-qt-bin` with no Qt test selected is a usage error; a pinned directory that does not
-  exist is one too, where it used to skip all 63 and exit 0. `LIBERAQT_QT_BIN` is a standing
-  default, so exporting it no longer breaks `pytest tests/ -m "not live"`. The option lives in a
-  conftest, so pytest's first pass does not know it: write `--liberaqt-qt-bin=DIR`, or put a
-  test path before it.
+for each part. A marker is never consent, and neither is an option's value
+(`--ignore tests/e2e/qt` once opted a run into all of Libero). `tests/conftest.py` enforces this
+and `tests/unit/test_live_gate.py` pins it with real inner sessions. The first version shipped
+with five bypasses because nothing tested it, so load `pytest-internals` before touching either.
 
 **`tests/e2e/` drives real applications**, is not run by CI, and is where every agent bug this
 project has had was found. It skips cleanly when the application it needs is absent.
@@ -154,10 +118,10 @@ project has had was found. It skips cleanly when the application it needs is abs
 | `tests/e2e/qt/test_actions_live.py` | Qt Assistant | Text input, chords, window shortcuts, checkboxes, item views, wheel |
 | `tests/e2e/qt/test_selectors_live.py` | Qt Assistant | Every selector rule, operator, pseudo-class, strictness, scoped chaining |
 | `tests/e2e/qt/test_qml_live.py` | qmleasing | The Quick tree, `Window.kind`, and rootless searches across both trees |
+| `tests/e2e/qt/test_docs_examples.py` | Qt Assistant | The getting-started page's code, run as a test so the tutorial cannot rot |
 | `tests/e2e/libero/test_libero_smartdesign.py` | Libero SoC | Reading/writing a self-painting widget through its slots |
 | `tests/e2e/libero/test_libero_configurator.py` | Libero SoC | Driving an out-of-process dialog through a child agent |
 | `tests/e2e/libero/test_libero_smarttime.py` | Libero SoC | Opening SmartTime from the Design Flow and driving it — a **64-bit** child of a 32-bit parent |
-| `tests/e2e/qt/test_docs_examples.py` | Qt Assistant | The getting-started page's code, run as a test so the tutorial cannot rot |
 | `tests/e2e/libero/test_libero_nlview.py` | Libero SoC | Reading a schematic out of an NLview canvas through `call_native` |
 | `tests/e2e/libero/test_libero_selectors.py` | Libero SoC | `:has`, `:parent`, `parent()`, `ancestor()` on a **different ABI** (Qt 5.15, MSVC, 32-bit); read-only |
 | `tests/e2e/libero/test_libero_synthesis.py` | Libero SoC | One end-to-end flow: new project → SmartDesign → import HDL → synthesise. Writes to disk, ~75s |
@@ -166,18 +130,21 @@ There is deliberately **no purpose-built sample application**, and there should 
 agrees with whatever the driver happens to do; three separate bugs that made LiberaQT unusable on
 real software sat undetected behind a green sample suite (see git history for `sync.wait_idle`,
 namespaced class names, and objectNames that are not bare identifiers). Every one of these suites
-drives software written with no knowledge of this project.
-
-That keeps paying. `tests/e2e/` has since caught, among others: `:has()` and `:parent()` being parsed by
-the client and silently dropped by the agent; chaining off `.first` widening the search back out to
-every match; two Libero buttons identical in class, text *and* objectName; and a `QCompleter` popup
-whose mouse grab swallows the click that follows it.
+drives software written with no knowledge of this project. That keeps paying: `tests/e2e/` has
+since caught `:has()` and `:parent()` being parsed by the client and silently dropped by the agent,
+chaining off `.first` widening the search back out to every match, two Libero buttons identical in
+class, text *and* objectName, and a `QCompleter` popup whose mouse grab swallows the next click.
 
 **Two ABIs matter, not one.** Assistant is Qt 6.7 / MinGW / x86_64 and ships inside the same Qt the
 agent is built from. Libero is Qt 5.15 / MSVC / **x86**, from a vendor who has never heard of this
 project. A selector engine shipping as a Qt plugin is only proven by passing on both, and the two
 have genuinely disagreed — `ancestor("QDockWidget")` returns a plain `QDockWidget` in Assistant and
 Libero's namespaced `Aqwidget::AQDockWidget` subclass. **Compare handles, not class names.**
+
+The Qt suites are green against 6.5 and 6.7. Qt 5.15's Assistant is not a drop-in target: its help
+viewer is a `QTextBrowser`, and `test_wheel_scrolls_the_help_viewer` fails there through every
+target tried — an unexplained gap in 5.15 wheel delivery, deliberately left red rather than
+skipped (62 of 63 pass).
 
 An older suite covering Designer, Linguist, qdbusviewer and qmleasing was deleted on 2026-08-17 and
 is still in git history at `b51cfa0:integration/`; take anything useful from there rather than
@@ -204,7 +171,7 @@ pytest tests/e2e/qt/test_actions_live.py tests/e2e/qt/test_selectors_live.py   #
 
 # Every Qt-based suite resolves its application through conftest's `qt_tool`, so one flag
 # points the whole set at a particular Qt -- which is how you verify a new Qt version:
-pytest tests/e2e/qt/test_actions_live.py tests/e2e/qt/test_selectors_live.py tests/e2e/qt/test_qml_live.py        tests/e2e/qt/test_docs_examples.py --liberaqt-qt-bin "C:/Qt/6.5.3/mingw_64/bin"
+pytest tests/e2e/qt --liberaqt-qt-bin "C:/Qt/6.5.3/mingw_64/bin"   # all four Qt suites
 # The choice is exclusive: a path with no Qt in it skips rather than falling back to another
 # installation, because silently testing 6.7 while believing you tested 6.5 is worse than a skip.
 pytest tests/e2e/libero/test_libero_selectors.py                          # read-only, ~10s
@@ -216,6 +183,10 @@ pytest tests/e2e/qt          #  63   Qt's own tools
 pytest tests/e2e/libero      #  40   Libero SoC
 pytest tests/e2e -m "libero and not writes_disk"   # 10, the read-only Libero suite
 pytest tests/e2e -m "live and not slow"            # 102, all but the synthesis run
+
+liberaqt doctor <exe>          # first thing to run against any new target
+liberaqt agents list           # installed agents: tag, revision, provenance
+liberaqt agents update --check # which are behind a published release; downloads nothing
 ```
 
 `pytest` on its own collects `tests/unit` only: pyproject pins `testpaths`. The live suites have
@@ -237,42 +208,21 @@ on Windows, `$XDG_CACHE_HOME/liberaqt/agents/` elsewhere. Tag format is
 ### Building the agent
 
 ```bash
+liberaqt agents kits                 # Qt kits on this machine an agent can be built from
+liberaqt agents build --tag <tag>    # configure, build, install, and check the plugin key
+
+# By hand (Linux):
 cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR -DCMAKE_BUILD_TYPE=Release
 cmake --build build/agent --parallel
 cmake --install build/agent --prefix ~/.cache/liberaqt/agents/qt6.7-linux-x86_64-gcc
 ```
 
-Windows / MinGW — Qt 6.7 targets, PowerShell:
-
-```powershell
-$env:PATH = "C:\Qt\Tools\mingw1120_64\bin;C:\Qt\6.7.3\mingw_64\bin;$env:PATH"
-cmake -S agent -B build/agent -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.7.3/mingw_64 `
-      -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=C:/Qt/Tools/mingw1120_64/bin/g++.exe
-cmake --build build/agent --parallel
-cmake --install build/agent --prefix "$env:LOCALAPPDATA\liberaqt\agents\qt6.7-windows-x86_64-mingw"
-```
-
-Windows / MSVC 32-bit — what Libero SoC needs, and what CLAUDE.md long claimed was impossible on
-this machine. Visual Studio 2022 BuildTools **is** installed, and Qt 5.15's 32-bit kit is
-`C:/Qt/5.15.0/msvc2019` (Qt names 32-bit without a suffix; `msvc2019_64` is the 64-bit one). MSVC
-toolsets v140–v143 are binary compatible, so VS2022's compiler links fine against a Qt built with
-2019. Run from `cmd`, or a `.bat`, because `vcvarsall` sets the environment for the shell it runs
-in:
-
-```bat
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x86
-cmake -S agent -B build/agent-msvc32 -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/5.15.0/msvc2019 -DCMAKE_BUILD_TYPE=Release
-cmake --build build/agent-msvc32 --parallel
-cmake --install build/agent-msvc32 --prefix "%LOCALAPPDATA%\liberaqt\agents\qt5.15-windows-x86-msvc2019"
-```
-
-Use a separate build directory per ABI: the two configurations cannot share one.
-
-Always `-G Ninja`: the "MinGW Makefiles" generator chokes on drive-letter colons.
-
-Driving an application by hand does not need Qt on `PATH` — the application loads its own DLLs
-from its own directory. `LiberaQt.launch()` only needs the path to the executable and a matching
-agent installed under the tag `liberaqt doctor` reports.
+Use a separate build directory per ABI, and always `-G Ninja` on Windows (the "MinGW Makefiles"
+generator chokes on drive-letter colons). The Windows recipes for this machine — MinGW for Qt 6.x,
+and MSVC 32-bit for Libero's Qt 5.15, which needs `vcvarsall x86` from `cmd` — are in
+`agent-release`. An installed agent is a binary in the cache, so a checkout never updates it:
+after changing `agent/`, rebuild every ABI you will verify against. Driving an application does
+not need Qt on `PATH`; it loads its own DLLs from its own directory.
 
 ## Python client (`src/liberaqt/`)
 
@@ -296,7 +246,7 @@ agent installed under the tag `liberaqt doctor` reports.
 | `mouse.py` / `keyboard.py` | Low-level input for interactions locators do not cover |
 | `spy.py` / `codegen.py` | Event recording → generated pytest file |
 | `suggest.py` | Rank candidate selectors per object; uniqueness answered by the agent, not guessed |
-| `cli.py` | `doctor`, `agents list|install|kits|build|remove`, `inspect`, `record`, `docs`, `run` |
+| `cli.py` | `doctor`, `agents list\|install\|update\|kits\|build\|remove`, `inspect`, `record`, `docs`, `run` |
 | `pytest_plugin.py` | Fixtures, CLI options, `liberaqt.toml`, failure diagnostics |
 
 Design rules: synchronous API only; locators do no I/O until action time; **no Qt dependency in
@@ -338,65 +288,45 @@ error:
 * **Warnings are turned up** (`-Wall -Wextra -Wpedantic -fvisibility=hidden`, `/W4 /permissive-`),
   not to errors — but a new warning in a file that had none is worth reading.
 * **The agent links `Qt::GuiPrivate`** for `QWindowSystemInterface`. A Qt installation without
-  private headers cannot build it, and the private API moves within a major release (see the 6.6
-  `handleFocusWindowChanged` rename under Injection).
+  private headers cannot build it, and the private API moves within a major release
+  (`handleFocusWindowChanged` was renamed in 6.6; `agent-loading` has the story).
 
 `agent/CMakeLists.txt` compiles a fixed source list, so **a new `.cpp` has to be added to
 `LIBERAQT_SOURCES`** — there is no glob.
 
-**`nullptr` as a search root means "the whole application", so a dead root must never become
-one.** `ObjectRegistry::resolveOrNull` answers `nullptr` both for "no handle given" and "handle
-given but the object is gone", and `SelectorEngine::find(sel, nullptr, ...)` searches every
-window. `object.find` and `object.tree` conflated the two, so reusing a `Window` after its dialog
-closed silently searched the *main* window instead of failing — it resolved real foreign objects,
-offered their near misses as suggestions, and stopped only at actionability. Use
-`resolveRoot()` for anything that takes an optional root: empty stays `nullptr`, dead throws
-`Stale`. Note `dlg.title` always raised correctly; only the search path widened, which is why it
-went unnoticed.
+Four rules for agent C++, each of which closed a bug that produced a wrong answer, not an error:
 
-**Two commands own preconditions the generic actionability probe gets wrong.** The probe checks
-visibility *before* the `if (!nativeInput) return {}` escape, so synthetic delivery still demands
-a visible widget. That is right for a click and wrong for `input.set_text`, whose whole purpose is
-filling a field on a form page that is not currently shown — so `fill()` passes
-`actionable=False` and `InputSynth::setText` enforces what actually matters for it: not
-read-only, not disabled. Likewise `keyTarget` refuses a non-window widget that cannot take focus:
-native keys go to the *window* and Qt routes them to whatever has focus, so typing at a
-`QStatusBar` used to edit an unrelated field and report success.
+* **A dead root must never become `nullptr`**, because `nullptr` as a search root means "the whole
+  application". `ObjectRegistry::resolveOrNull` answers `nullptr` both for "no handle given" and
+  "object gone", so use `resolveRoot()` for anything that takes an optional root: empty stays
+  `nullptr`, dead throws `Stale`. Reusing a `Window` after its dialog closed used to search the
+  main window instead, resolving real foreign objects and offering their near misses.
+* **Two commands own preconditions the generic actionability probe gets wrong.** The probe checks
+  visibility even in synthetic mode, which is wrong for `input.set_text` (filling a field on a page
+  not currently shown): `fill()` passes `actionable=False` and `InputSynth::setText` enforces only
+  not-read-only and not-disabled. And `keyTarget` refuses a non-window widget that cannot take
+  focus, because native keys go to the window — typing at a `QStatusBar` used to edit an unrelated
+  field and report success.
+* **`headerData`'s default is the 1-based section number as an int**, never empty. Detect "no
+  header" by that int type, not `isEmpty()`, or `to_records()` keys become `"1", "2"` while
+  `cell(row, column)` stays 0-based.
+* **A widget that paints its own contents has nothing in the object tree** (Libero's SmartDesign
+  canvas, wrapping NLview). The meta-object is the only way in: `object.list_methods` to discover
+  the slots, `object.invoke` to call them — including `std::string` parameters, which the agent
+  materialises itself, legitimately only because the plugin already matches the application's
+  compiler and stdlib. See `tests/e2e/libero/test_libero_smartdesign.py`.
 
-**`headerData` has a non-empty default, so "no header" cannot be tested with `isEmpty()`.**
-`QAbstractItemModel`'s default returns the 1-based section number *as an int*, which is never
-empty — so `modelData`'s index fallback was unreachable and `to_records()` handed back keys
-`"1", "2"` while `cell(row, column)` stayed 0-based. Detect the default by its int type, not by
-emptiness.
-
-**A widget that paints its own contents has nothing in the object tree**, so no selector will
-reach inside it — Libero's SmartDesign canvas (`Aqnlvcanvas::NlvSDWidget`, wrapping NLview) has no
-`QGraphicsView`, no per-item objects and no properties of its own. The meta-object is the only way
-in: `object.list_methods` to discover the slots, `object.invoke` to call them. That includes
-`std::string` parameters, which QVariant cannot convert into and which the agent therefore
-materialises itself — legitimate only because the plugin already has to match the application's
-compiler and stdlib. See `tests/e2e/libero/test_libero_smartdesign.py`.
-
-**Adding a command:** handler in `dispatcher.cpp` (runs on the GUI thread) → name in
-`protocol.Cmd` → client method → `docs/PROTOCOL.md` entry → a test in `tests/e2e/` that drives it
-against a real application. (Older text here and in `docs/CONTRIBUTING.md` asks for a "conformance
-suite entry" and "a test against the sample app": neither exists, and neither should be looked
-for.) Nothing in
-the repository will exercise the handler, so drive it against a real application by hand before
-believing it works: every agent bug this project has had was found that way and by nothing else.
-
-Three registration helpers, and picking the wrong one is how a command comes to race the
-application: `registerCommand` for anything that answers immediately, `registerAsyncCommand` for
-anything that lets the event loop turn, and `registerInputCommand` — which every `input.*` command
-uses — for anything that only *queues* events and must reply once the queue has drained.
-
-**A command that lets the application run must be asynchronous.** Use `registerAsyncCommand` and
-resolve from the event loop. Blocking inside a handler — in particular pumping it with
-`QCoreApplication::processEvents` — strands the reply the moment the application enters a nested
-loop of its own, and a modal dialog during startup is enough to do that. `sync.wait_idle` and
-`sync.wait_signal` are the worked examples; the latter connects through `SignalWaiter`, a
-self-deleting `QObject` that reports exactly once whether it was the signal or the timeout —
-a runtime-named signal needs a real slot on the receiving end, so a lambda will not do.
+**Adding a command** follows `add-agent-command`: handler in `dispatcher.cpp` (runs on the GUI
+thread) → name in `protocol.Cmd` → client method → `docs/PROTOCOL.md` entry → a test in
+`tests/e2e/` that drives it against a real application → `plugins/liberaqt/` and its version, if
+users can now do something new. Nothing in the repository will exercise the handler, so drive it
+against a real application by hand before believing it works. Pick the registration helper by what
+the handler does — `registerCommand` answers immediately, `registerAsyncCommand` lets the event
+loop turn, `registerInputCommand` (every `input.*`) only queues events and replies once they drain
+— and never block or pump `QCoreApplication::processEvents` inside a handler: the reply is
+stranded the moment the application enters a nested loop of its own. Older text in
+`docs/CONTRIBUTING.md` asks for a "conformance suite entry" and "a test against the sample app":
+neither exists, and neither should be looked for.
 
 ## Injection
 
@@ -411,206 +341,34 @@ LIBERAQT_PORT_DIR=<temp dir>    # each agent writes <pid>.port here; the launche
 LIBERAQT_RECORD=1               # only in recorder mode
 ```
 
-The agent is a Qt plugin, so it must match the AUT's Qt **minor** version (6.7, not 6.8) and its
-compiler/stdlib ABI.
+Getting injection wrong fails silently — no agent, no port file, no error — so these rules are
+enforced in code rather than left to the user. `agent-loading` has why each exists and how to
+diagnose an agent that never attaches.
 
-**`resolve()` matches the compiler family, not just Qt version and platform.** It reads the toolchain
-from the binary's Qt build stamp (`inspect_binary().toolchain`) and keeps only agents of that family
-(`compiler_family()`: MSVC 2015/2019/2022 are one; MinGW is another). It used to ignore the
-compiler, so with both `qt5.15-windows-x86-mingw` and `-msvc2019` installed, Libero -- MSVC -- got the
-MinGW agent, whichever sorted first. The Libero suite still passed, because the launcher lists every
-installed agent's key and the MinGW load failed first, so Qt fell through to the MSVC one; `doctor`
-reported the wrong agent outright. Only the wrong compiler installed is now a refusal that says so.
+* **An agent must match the application's Qt minor version, pointer size and compiler family**
+  (MSVC 2015–2022 are one family, MinGW another). `resolve()` reads all three from the binary's Qt
+  build stamp, so none of it is guessed.
+* **The version fallback only looks downwards**: an agent built against 6.5 loads into 6.5–6.7,
+  but one built against 6.7 is refused by a 6.5 host.
+* **The plugin key carries all three** (`liberaqt_5_15_32_msvc`, `liberaqt_6_7_64_gnu`), because Qt
+  binds a key to the first library on the path that claims it. `agent/CMakeLists.txt` generates it
+  into `liberaqt_plugin.json` and `plugin_key_for()` derives it from a tag; **the two must stay in
+  step**. After changing either, `liberaqt doctor` must not report `STALE`.
+* **Every Qt child the application spawns loads an agent too.** That is how out-of-process windows
+  are reached (`app.child_agents`, `app.attach_child()`); port files are keyed by pid, each child
+  runs its own server, and a child may outlive the parent.
+* **A statically linked Qt is never injectable, and neither is a process that never constructs a
+  `QGuiApplication`** — `liberaqt doctor` sees the first, not the second.
 
-**The version rule is asymmetric, and `resolve()` relies on it.** Qt keeps plugins forward
-compatible within a major release, so an agent built against 6.5 loads into 6.5, 6.6 and 6.7 —
-but one built against 6.7 is refused by a 6.5 host, silently, in the usual way (no agent, no port
-file, no error). So the fallback only ever looks *downwards*, taking the newest installed agent at
-or below the application's version, and refuses upwards with a message naming the agent it would
-not use. Building against the oldest Qt you support therefore covers the whole major series with
-one binary — **but only if it compiles there**, and the private API it uses does move. Qt renamed
-`handleWindowActivated` to `handleFocusWindowChanged` *within* Qt 6, not at the 5-to-6 boundary,
-so `compat.h` gates that one at 6.6 rather than on the major version. A 6.5 build found it, as a
-compile error rather than a silent failure, which is the good case. 6.6 itself is untested.
+Exercised: Qt 5.15, 6.5.3 and 6.7.3; 6.6 is untested. Generic-plugin injection is the only mode
+that works: the fallbacks in `docs/INJECTION.md` are not implemented.
 
-Exercised: **Qt 5.15, 6.5.3 and 6.7.3**. The Qt suites pass against 6.5 and 6.7 (63 tests each),
-selected with `--liberaqt-qt-bin`. Fallbacks (LD_PRELOAD, Windows DLL injection, opt-in embedding) are described
-in `docs/INJECTION.md` but **not implemented**: `agent/preload/` and `agent/injector_win/` hold a
-README each and no source. Generic-plugin injection is the only mode that works today.
-
-**Every Qt child the application spawns inherits this and loads an agent too.** That is not a
-leak, it is the only way to reach a window that is not in the application at all: Libero's IP core
-configurator is a separate `coreconfig.exe`, invisible to Libero's own agent. `app.child_agents`
-lists them and `app.attach_child()` connects with the same inherited token — see
-`tests/e2e/libero/test_libero_configurator.py`. The port file is keyed by pid for exactly this reason; one
-shared path meant the child silently overwrote the parent's port. Two things to remember: every
-such child stands up its own server, and a child may outlive the parent, since cleanup only
-terminates what the launcher started.
-
-### Distributing and updating agents
-
-An installed agent carries a manifest at its prefix root, `liberaqt-agent.json`, generated by the
-agent's CMake: revision (`git describe`), Qt version, plugin key, compiler, bitness, protocol.
-`agent_install` adds `source` and `archive_sha256` when the bits came from an archive. Without it
-an install is an anonymous `.dll` and "is mine older than the fix I pushed?" has no answer — which
-is why every agent built before this reports its revision as `unknown` rather than pretending.
-
-The revision is resolved at **configure** time, so a bare `cmake --build` after new commits keeps
-the old value. `liberaqt agents build` reconfigures every time, which is the path that matters.
-
-```bash
-liberaqt agents list                  # tag, revision, and where each came from
-liberaqt agents update --check        # what is behind, downloading nothing
-liberaqt agents update                # refresh the ones that are
-liberaqt agents update --tag qt6.5-windows-x86_64-mingw
-```
-
-`update` compares the installed `archive_sha256` against the **64-byte checksum** published
-beside the archive, so checking every ABI costs almost nothing. `--check` exits **1** when
-something is behind, the `ruff format --check` convention, so CI can gate on it. Every state is
-reported as itself rather than collapsed into another:
-
-* **update available** / **damaged** — acted on. Damaged means the binary on disk lacks its
-  plugin key; the recorded archive checksum alone can only ever say "the release has not moved",
-  never "these bits are intact", so it is checked against the file itself.
-* **local build** — no published counterpart, and usually *newer* than a release. Left alone,
-  and still left alone when damaged; `liberaqt agents build` refreshes it.
-* **not managed** — the build lives on `LIBERAQT_AGENT_PATH`, not in the cache. Never written:
-  update used to read that copy and write to the cache it shadows, so it said "updated" on every
-  run and never converged. It also considers only `agent_registry.effective()` — one build per
-  tag, the one a launch uses — never `installed()`, which lists a tag once per directory.
-* **nothing published for this ABI** — a 404. Qt 5.15 msvc2015 and the arm64 kits have no runner.
-* **could not check** — unreachable, or the `.sha256` is not a checksum (an HTML error page
-  served with a 200). Kept distinct from "nothing published", which it used to be reported as.
-* **cannot tell** — no manifest, so it predates version stamping. Reinstall to get one.
-
-**`install` validates before it replaces.** It unpacks into a dotted staging directory beside the
-cache (the registry skips dotted names), checks *those* bits — not `installed()`'s first match
-for the tag, which may be a copy on `LIBERAQT_AGENT_PATH` — stamps the manifest, and only then
-swaps them in. It used to delete the live prefix first, so a refused reinstall destroyed a
-working agent and left the refused one in its place, provenance and all, which `doctor` then
-reported as a match. A `--tag` that is not tag-shaped is refused: it is a directory name, and
-`--tag ../../x` used to unpack outside the cache.
-
-Archives live at `<base>/<tag>.zip` with an optional `<tag>.zip.sha256`. The default base is
-`https://github.com/sargis2000/LiberaQt/releases/latest/download` — `releases/latest/download` is
-a GitHub alias for the newest release, so the URL never needs bumping. `LIBERAQT_AGENT_BASE_URL`
-overrides it for an internal share, and `--from` overrides everything for a one-off.
-
-CI builds ten ABIs and packages eight as that pair; pushing a `v*` tag runs the `publish` job,
-which attaches them to the release. The two it compiles but never ships are Qt 6.5 and 6.7 MinGW:
-those kits were built with GCC 11.2 (their `mkspecs/qconfig.pri` says so) and aqt offers no MinGW
-11.2, only 8.1, 9.0 and 13.1 -- and an agent built with another GCC links a different libstdc++
-than the application loads. Their published agents come from a matching local build. The matrix's
-arch and tool names are checked against `aqt list-qt` / `aqt list-tool`; the first version
-guessed them and failed every Qt 6 leg. So the answer to "I fixed the Qt 6.5 agent, how does everyone
-else get it?" is: tag a release, and their `liberaqt agents update` picks it up.
-
-`liberaqt agents kits` lists the Qt kits on this machine an agent can be built from, and
-`liberaqt agents build --tag <tag>` builds and installs one: the tag is derived from the kit
-that was actually configured, MinGW is matched to the kit's own version, and the installed
-binary is checked for its plugin key before the command reports success.
-
-`liberaqt docs` serves the documentation site locally and `liberaqt docs build` builds it
-(`--build` is the older spelling, kept working); mkdocs when the `docs` extra is installed, else
-the last built site over `http.server`. It prints the real address — under the `site_url` path
-rather than the root — and which copy of the sources it is using.
-
-**The documentation ships inside the wheel.** `force-include` in pyproject puts `docs/` and
-`mkdocs.yml` at `liberaqt/_docs/`, and `docs_root()` looks there after the cwd and the checkout,
-so `liberaqt docs` works from a plain `pip install` rather than only from a checkout. Three
-consequences, each of which cost a real bug to find:
-
-* **`build` must pass an absolute `--site-dir`.** mkdocs resolves both `site_dir:` and a
-  *relative* `--site-dir` against the config file, which from a wheel is inside site-packages —
-  so an unguarded build writes the whole site in there, exit 0, no warning.
-* **mkdocs erases its destination, so ownership decides what `build` may write into -- never
-  file names.** Every build writes a hidden `SITE_STAMP` (`.liberaqt-docs-build`), which mkdocs'
-  clean keeps because it skips dotfiles; a destination is disposable only if it has no visible
-  entries or carries the stamp. The first version trusted any folder holding a `404.html` or a
-  `sitemap.xml` and erased everything else in it, and treated naming `--site-dir` as consent --
-  so `--site-dir .` in a project deleted every visible file in it, exit 0. `--force` is consent
-  now, and nothing overrides the refusal for a filesystem root, home, or an ancestor of the cwd.
-  A link is judged, and named, by its target: through a junction, the erased files used to live
-  outside the working tree. A checkout's own `site/` is trusted unstamped, so builds from before
-  the stamp still work.
-* **Only a real checkout counts as one**: `is_checkout()` wants `mkdocs.yml` *and*
-  `src/liberaqt/`, searched from the cwd upwards. Any `mkdocs.yml` used to do, so a user's own
-  docs were served and built under LiberaQT's name; and from a checkout's `docs/` the checkout was
-  missed, a site was built into the documentation sources, and `force-include` shipped it in the
-  next wheel (+1.2 MB, 71 entries). The static fallback serves only a stamped site, for the same
-  reason.
-* **The install hint is built from `sys.executable` and the extra's own requirements**, read
-  from the installed metadata. Asking pip for `liberaqt[docs]` re-cloned the repository -- fatal
-  offline, and it replaced a pinned version with `main` -- and `pip install -e ".[docs]"` from
-  anywhere but a checkout's root installed the user's own project. `docs_command` checks every
-  module of the extra, not just mkdocs.
-* **`pip install -e` copies `liberaqt/_docs` into site-packages too**, where nothing reads it
-  (the editable package resolves to `src/liberaqt`). Inert but stale; hatchling offers no
-  pyproject-level way to skip force-include for editable builds.
-
-Nothing in `tests/unit` can notice the docs falling out of the wheel — they never build one — so
-CI has a `packaging` job that builds a wheel and asserts `liberaqt/_docs/mkdocs.yml` and at least
-one page are in it.
-
-`liberaqt doctor <exe>` is the first thing to run against any new target. It classifies the binary
-via `agent_registry.inspect_binary()` into three outcomes, and the distinction matters:
-
-* **dynamic Qt** → injectable; it then reports whether a matching agent exists, and names the
-  toolchain when one does not (an agent for the right Qt but the wrong compiler will not load)
-* **static Qt** → *never* injectable by any mode, because there is no plugin loader and a second
-  Qt copy in one process is undefined behaviour. Only the embedded build (INJECTION.md §4) works.
-
-A fourth outcome `doctor` cannot see: **a dynamically-linked Qt process that never builds a GUI**.
-Generic plugins are instantiated by the QPA platform plugin, which only exists once a
-`QGuiApplication` is constructed, so a `QCoreApplication`-only process reads the injection
-environment and acts on none of it — no agent, no port file, no error. Libero's Netlist Viewer is
-the worked example: the same binary attaches when launched with `-s <script>` (QtGui and QtWidgets
-load) and never does when Libero starts it (QtCore alone). Launch such a tool yourself rather than
-attaching to the one the application spawned; `Win32_Process.CommandLine` gives the parent's
-arguments.
-
-**Do not assume one ABI per application tree.** Libero is 32-bit and spawns a 64-bit
-`NetlistViewer.exe` and a 64-bit SmartTime; of the 54 Qt applications it ships, 44 are x86 and 10
-x86_64, all Qt 5.15. Install an agent per ABI; the launcher puts every installed plugin directory
-on `QT_PLUGIN_PATH` so a child of either architecture can find one.
-
-**One plugin key cannot serve two ABIs**, and getting this wrong fails completely silently. Qt
-binds a plugin key to exactly one library — `qLoadPlugin` takes the first match on the path and
-never tries a second — so while every build advertised only `liberaqt`, the first directory listed
-owned the key and every other architecture was locked out: environment delivered, plugin present,
-no agent, no port file, no error anywhere. **Pointer size alone does not identify an ABI**, which cost a second round of
-exactly this bug: a 64-bit MinGW build and a 64-bit MSVC build both claimed `liberaqt_64`, and
-installing the former stopped SmartTime — an MSVC application — from finding the latter. What
-distinguishes two mutually unloadable plugins is Qt minor version, pointer size *and* compiler,
-so the key carries all three: `liberaqt_5_15_64_msvc`, `liberaqt_6_7_64_gnu`,
-`liberaqt_5_15_32_msvc`.
-
-`agent/CMakeLists.txt` generates it into `liberaqt_plugin.json` via `configure_file`, and
-`plugin_key_for()` in `agent_registry.py` derives the same string from an install tag — the two
-must stay in step. The same CMake variable is compiled in as `LIBERAQT_PLUGIN_KEY`, so the hello
-banner's `capabilities["abi_key"]` names the key the plugin was actually loaded under. It used
-to rebuild the key from pointer size alone and report `liberaqt_64` -- the scheme per-ABI keys
-replaced -- so every agent described itself wrongly; an agent that still says so predates the fix. The launcher names every installed agent's key in `QT_QPA_GENERIC_PLUGINS`, so
-each process asks for the one it can load and is refused the rest harmlessly. **After changing
-anything here, check the key is really in the binary**; `liberaqt doctor` does it for every
-installed agent and marks a build that lacks its own key `STALE`. `liberaqt doctor` checks this for every
-installed agent and flags one that predates the keys as `STALE`; agents live in the cache and are
-not versioned, so a checkout is not enough — they have to be rebuilt per ABI.
-
-Diagnosing a child that loads no agent: `QT_DEBUG_PLUGINS=1` makes Qt narrate every plugin it
-considers and why it refuses one. Note the child's output does *not* reach `app.logs` — it does
-not inherit the parent's pipe — so read it from the child itself.
-
-Attaching works today for `coreconfig.exe`, SmartTime (`smartsta.exe`, and the first
-cross-architecture case proven), `IOEditor`, `FPExpress`, `sdbg`, `pa5pllgui`, `IOAdvisor` and
-`stce`; the rest mostly want arguments, as `coreconfig.exe` does.
-* **no Qt** → not a Qt application
-
-Linkage, version and compiler all come from the `QLibraryInfo::build()` stamp Qt writes into
-whichever binary carries QtCore, so none of it is guessed. The PE import parser and the stamp
-parser both take bytes rather than paths, which is what lets `tests/test_agent_registry.py` cover
-them with no Qt installed.
+**Distributing agents.** Each installed agent carries a `liberaqt-agent.json` manifest (revision,
+Qt, plugin key, compiler, bitness, protocol). The revision is fixed at **configure** time, so a
+bare `cmake --build` after new commits keeps the old one; `liberaqt agents build` reconfigures
+every time. A fix reaches other machines by release: pushing a `v*` tag runs CI's `publish` job,
+and everyone's `liberaqt agents update` picks it up. `agent-release` has the update states, the
+staged install, and the two ABIs CI builds but never ships.
 
 The agent is an RCE surface by design: loopback only, token required, one client, dormant without
 the token. It must never ship in a production build.
@@ -656,8 +414,9 @@ a read-only widget, because succeeding where a user could not type is a false pa
 
 Every action: resolve the selector to exactly one object (retry at 50 ms) → check actionability
 (exists → visible → enabled → not obscured → has geometry) → act → wait for idle (queue drained,
-animations done, extra event-loop turn). Failures raise structured exceptions carrying near-miss
-suggestions.
+extra event-loop turn). Failures raise structured exceptions carrying near-miss suggestions.
+**Idle does not include animations**, whatever `docs/` says: `IdleTracker::hasRunningAnimations()`
+is a `TODO(m2)` that returns `false`, and `hasPendingNetwork()` a `TODO(m4)` that does the same.
 
 `retry()` retries any `LiberaQtError` whose class sets `retryable = True` and re-raises as
 `LiberaQtTimeoutError` (exported from the package root; the class in `errors.py` is named
@@ -681,33 +440,14 @@ is what the deleted `integration/` suite did, and the reason it used none of the
 
 Fixtures: `app` (per-test Application), `app_session` (session-scoped), `win`, `liberaqt`,
 `liberaqt_config`. Options: `--liberaqt-exe`, `--liberaqt-qt`, `--liberaqt-headless`,
-`--liberaqt-slowmo`, `--liberaqt-timeout`, `--liberaqt-trace`, `--liberaqt-input-mode`. Config comes from
-`<rootdir>/liberaqt.toml` under `[liberaqt]`. On failure the plugin writes a screenshot and the
-last protocol messages to `liberaqt-trace/`.
+`--liberaqt-slowmo`, `--liberaqt-timeout`, `--liberaqt-trace`, `--liberaqt-input-mode`. Config
+comes from `<rootdir>/liberaqt.toml` under `[liberaqt]`. On failure the plugin writes a screenshot
+and the last protocol messages to `liberaqt-trace/`.
 
-Four things about it that each cost a real bug, all pinned by `tests/unit/test_pytest_plugin.py`
-(which runs real inner sessions through `pytester` — precedence is an interaction between pytest,
-the plugin and the file, not a property of one function):
-
-* **An option that has a default cannot beat the config file.** `--liberaqt-timeout` had
-  `default=5.0`, so `setdefault` could not tell "passed" from "not passed" and the toml always
-  won. Options that the toml can also set have `default=None`, and `--liberaqt-headless` is a
-  `BooleanOptionalAction` so the command line can turn it *off* — `headless = true` otherwise
-  hard-failed every test on Windows with no way out.
-* **Diagnostics are written from `pytest_runtest_makereport`, not a fixture teardown.** Teardown
-  is too late for `app`, which closes its application there, and never ran for `app_session` at
-  all. The hook fires after the test body and before any teardown, finds the driver through
-  `config.stash`, and captures every application still running.
-* **File names come from the scrubbed node id**, capped at 150 characters. The bare test name
-  collided across files, and on Windows a `:` in a parametrize id wrote both files into NTFS
-  alternate data streams of a zero-byte file, invisible to everything.
-* **The auth token is redacted in `Transport._record`**, because the history is what lands in
-  `liberaqt-trace/` and CI uploads that folder. It redacts a *copy*: the wire bytes are
-  serialised before `_record` runs, but mutating the caller's dict would still be a trap.
-
-A config that exists and is ignored must never be silent: an unknown key, a `[tool.liberaqt]`
-section and a Python without a TOML parser all warn. The last one was every 3.9/3.10 user until
-`tomli` was made a dependency for them — including the 3.9 CI leg.
+An option the toml can also set has `default=None` (a default cannot lose to the config file);
+diagnostics are written from `pytest_runtest_makereport`, not a fixture teardown; and a config that
+exists and is ignored always warns. `pytest-internals` has each rule and the bug it closed;
+`tests/unit/test_pytest_plugin.py` pins them with real inner sessions through `pytester`.
 
 ## Selectors
 
@@ -754,7 +494,7 @@ Two things worth knowing before asserting on any of this:
   handles, not class names.
 * **Chaining off a narrowed locator scopes to it.** `win.locator("X").first.locator("Y")` means
   "Y inside that one X", and `.all()` elements behave the same way. This was once not true, and
-  the silent widening it caused is covered by `tests/test_locator_scoping.py`.
+  the silent widening it caused is covered by `tests/unit/test_locator_scoping.py`.
 
 ## Coding style
 
@@ -771,16 +511,66 @@ Two things worth knowing before asserting on any of this:
 * C++: Qt conventions; Qt 5/6 differences behind `compat.h`.
 * Commits in this repo do not carry a `Co-Authored-By` trailer.
 
-## Claude Code configuration (`.claude/`)
+## Claude Code: two audiences, two directories
 
-Deliberately small. CLAUDE.md is thorough, and duplicating it into skills would make two sources
-of truth that drift apart; these exist only where a session needs *more* than prose.
+There are two sets of Claude material, for two different readers, and they must not be confused:
+
+* **`plugins/liberaqt/`** ships to **LiberaQT users**, whose Claude writes tests for *their*
+  application. It is a Claude Code plugin, listed by `.claude-plugin/marketplace.json` at the
+  repo root, so a user runs `/plugin marketplace add sargis2000/LiberaQt` and
+  `/plugin install liberaqt@liberaqt`. It must never mention this repository's internals.
+* **`.claude/`** is for **LiberaQT developers**, working in this checkout. It may assume the
+  checkout, the Qt installations on this machine and the agent cache.
+
+### The user plugin (`plugins/liberaqt/`)
 
 | Thing | What it is for |
 |-------|----------------|
-| `agents/qt-automation-tester.md` | A QA engineer who learns LiberaQT **from the docs only**, writes and runs real scenarios against real Qt applications, then reports what the developer experience was actually like. Use it to evaluate the library from outside, or to author new `tests/e2e/qt` coverage |
+| `skills/write-tests/` | The loop (doctor → inspect → write → run → read the failure → prove it can fail), selector choice, fixtures built on the `liberaqt` fixture, and the reliability rules. `references/api.md` is every public call taken from real signatures; `references/limitations.md` is the measured 0.1.x behaviour, each entry with a "Fixed yet?" check |
+| `skills/troubleshoot/` | Agent never attaches (part A), test fails (part B), ordered by likelihood |
+| `agents/explorer.md` | The user-side twin of `live-probe`: launches *their* application and returns verified selectors, including for dialogs `inspect` cannot reach |
+| `agents/test-author.md` | Scenario in, tests out, following the project's own conventions, and proving each test can fail |
+
+Both agents preload both skills through `skills:` in their frontmatter. Inside a plugin a skill
+registers under its scoped name, so the list says `liberaqt:write-tests`, not `write-tests`.
+Measured: with the scoped names, the agent starts with both skills' full text in context.
+
+**Keeping it true.** `tests/unit/test_claude_plugin.py` parses every Python block and every
+inline code span in `plugins/` and `.claude/`, infers the receiver type (`app.`, `win.`, `loc.`,
+`expect(...)`, or a variable assigned from one), and checks each attribute against the real class.
+It also resolves every `from liberaqt... import`, checks manifests, frontmatter and relative
+links, and checks that what the material calls absent (`win.app`, `expect(win).not_`) is still
+absent. So a rename fails CI. It cannot tell whether *advice* is still right; when a fix changes
+behaviour, delete the matching `limitations.md` entry yourself. Then **bump `version` in
+`plugins/liberaqt/.claude-plugin/plugin.json`**: an installed plugin is pinned to that version,
+so without a bump no user receives the change. The test holds its major.minor to the library's.
+
+`claude plugin validate --strict .` and `claude plugin validate --strict plugins/liberaqt` check
+the manifests (not agent frontmatter, which is what the unit test is for).
+`claude --plugin-dir plugins/liberaqt plugin details liberaqt` shows the inventory and token cost
+(about 550 tokens always-on). To use the plugin while working here, run
+`claude --plugin-dir plugins/liberaqt`.
+
+### The developer configuration (`.claude/`)
+
+**Each fact lives in one place.** Rules every session needs are in this file; an area's depth and
+the history behind its rules are in its topic skill; procedures are in the procedure skills. When
+a skill and this file disagree, one of them is stale — fix it rather than picking one. Topic
+skills carry no `paths:` restriction on purpose: a conditional skill is hidden until a matching
+file is touched, and most of them answer questions ("why doesn't the agent attach?") asked before
+any file is.
+
+| Thing | What it is for |
+|-------|----------------|
+| `agents/qt-automation-tester.md` | A QA engineer who learns LiberaQT **from the docs only**, then reads the user plugin as a second documentation surface, writes and runs real scenarios against real Qt applications, and reports what the developer experience was actually like. Carries the measured open-defect list and the fixed list to treat as regressions |
 | `agents/live-probe.md` | Answers one question against a running application without the object tree landing in the caller's context -- an Assistant tree dump is ~16 KB, `liberaqt inspect` another ~11 KB |
-| `skills/add-agent-command/` | The end-to-end command procedure: handler, `Cmd`, client, PROTOCOL.md, per-ABI rebuild, live verification |
+| `skills/add-agent-command/` | The end-to-end command procedure, with how far each of the six unregistered commands really is from done (`quick.evaluate` is one `registerCommand` line away) |
+| `skills/fix-finding/` | The repo's own fix loop: measure live, pin with a test seen failing on the old code, fix, rebuild per ABI, re-measure, sweep for the same bug class, update every description of the old behaviour including the user plugin |
+| `skills/qml-support/` | The measured Quick state, the three bugs behind the old "QML is deferred" impression, where to start on Quick input, testing against qmleasing |
+| `skills/pytest-internals/` | The live-suite gate's rules and the bypass each closed; the pytest plugin's precedence, diagnostics, trace names and redaction |
+| `skills/agent-loading/` | Diagnosing an agent that never attaches, `resolve()`'s matching rules, per-ABI plugin keys, child agents, `doctor`'s classes |
+| `skills/agent-release/` | Per-ABI build recipes, the manifest, every `agents update` state, staged installs, the CI matrix and publishing |
+| `skills/docs-site/` | `liberaqt docs`, the docs in the wheel, the site-dir ownership rules, pages that run as tests |
 | `settings.json` | Permission allowlist for the read-only and verification commands a session runs constantly. `liberaqt agents build` is **not** allowed (it writes the agent cache) and the Libero suites are `ask` (they write projects and take minutes) |
 
 The docs-only rule in `qt-automation-tester` is the point of it: a reviewer who has read
@@ -810,15 +600,11 @@ right altitude.
 | `docs/CONTRIBUTING.md` | Repo layout and house rules |
 | `docs/troubleshooting.md` | Symptom → cause, for the failures that look like nothing |
 
-`docs/` is also the mkdocs source (`mkdocs.yml`), so it holds a published site as well as these
-design documents: `index.md`, `getting-started/`, `guide/` and `reference/` are the user-facing
-half, and the table above is the reference half. `site/` is a local mkdocs build and is
-**gitignored**, so the `liberaqt docs` fallback to "the last built `site/`" only exists on a
-machine that has built it — on a fresh clone the command needs `pip install -e ".[docs]"`. Two
-consequences when editing:
-
-* `tests/e2e/qt/test_docs_examples.py` runs the code in `docs/getting-started/first-test.md` as a test, so
-  changing that page can break a suite. That is deliberate — it is how the tutorial is kept from
-  rotting.
-* `mkdocstrings` renders `reference/api.md` from the docstrings in `src/`, which is the other
-  reason the docstring rules in Coding style are enforced rather than advisory.
+`docs/` is also the mkdocs source (`mkdocs.yml`): `index.md`, `getting-started/`, `guide/` and
+`reference/` are the user-facing half, and the table above is the reference half. **Both ship
+inside the wheel** (`force-include` puts them at `liberaqt/_docs/`), so anything written into
+`docs/` reaches users. `tests/e2e/qt/test_docs_examples.py` runs the code in
+`docs/getting-started/first-test.md` as a test, and `mkdocstrings` renders `reference/api.md` from
+the docstrings in `src/` — the other reason the docstring rules above are enforced. A docs build
+erases its destination, so load `docs-site` before touching the `liberaqt docs` command, the
+`force-include` or `mkdocs.yml`.
