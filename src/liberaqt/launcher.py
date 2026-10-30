@@ -286,6 +286,14 @@ def launch(executable: str, args: list[str] | None = None, cwd: str | None = Non
     port_dir = Path(tempfile.mkdtemp(prefix="liberaqt-"))
 
     child_env = build_environment(agent, token, port_dir, env, record=record)
+    qt_lib = agent_registry.qt_library_dir(str(exe))
+    if qt_lib is not None:
+        # The agent's own Qt dependencies (QtNetwork, QtQuick) resolve against the application's
+        # Qt only through this: a dlopen'd plugin does not inherit the executable's RUNPATH.
+        # Prepended, so the application's own resolution -- the same directory -- is unchanged.
+        existing = child_env.get("LD_LIBRARY_PATH")
+        child_env["LD_LIBRARY_PATH"] = (f"{qt_lib}{os.pathsep}{existing}" if existing
+                                        else str(qt_lib))
     if headless:
         if sys.platform.startswith("linux"):
             child_env.setdefault("QT_QPA_PLATFORM", "offscreen")

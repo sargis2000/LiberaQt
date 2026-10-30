@@ -12,17 +12,66 @@ checks that the agent:
 * resolves a selector against the live widget tree.
 
 Usage: python agent_smoke.py <tag>     (QT_ROOT_DIR names the kit, as install-qt-action sets it)
+
+On failure it reports *why* as GitHub annotations, because annotations are readable without
+signing in while job logs are not: the launch error and its log, `liberaqt doctor`, unresolved
+shared libraries of the agent (Linux), and Qt's own plugin-loader narration.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
-from liberaqt import liberaqt
+from liberaqt import agent_registry, liberaqt
 from liberaqt.agent_registry import plugin_key_for
+from liberaqt.errors import LiberaQtError
+from liberaqt.launcher import build_environment
+
+
+def annotate(title: str, text: str) -> None:
+    """Print a block, as a GitHub error annotation when running in Actions."""
+    if os.environ.get("GITHUB_ACTIONS"):
+        body = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+        print(f"::error title={title}::{body[:8000]}")
+    else:
+        print(f"== {title}\n{text}")
+
+
+def diagnose(exe: Path, headless: bool) -> None:
+    """Explain a launch that produced no agent, in the order the causes are likely."""
+    doctor = subprocess.run([sys.executable, "-m", "liberaqt.cli", "doctor", str(exe)],
+                            capture_output=True, text=True)
+    annotate("liberaqt doctor", (doctor.stdout + doctor.stderr)[-6000:])
+
+    try:
+        agent = agent_registry.resolve(str(exe))
+    except LiberaQtError as exc:
+        annotate("resolve() refused", f"{exc}\n{exc.hint or ''}")
+        return
+    if sys.platform.startswith("linux"):
+        ldd = subprocess.run(["ldd", str(agent.library)], capture_output=True, text=True)
+        annotate(f"ldd {agent.library.name}", ldd.stdout + ldd.stderr)
+
+    # Run the application ourselves with the launcher's own environment plus Qt's plugin-loader
+    # narration, and keep every line that concerns generic plugins or the agent.
+    env = build_environment(agent, "smoke", Path(tempfile.mkdtemp()), dict(os.environ))
+    env["QT_DEBUG_PLUGINS"] = "1"
+    if headless:
+        env["QT_QPA_PLATFORM"] = "offscreen"
+    proc = subprocess.Popen([str(exe)], env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, errors="replace")
+    time.sleep(25)
+    proc.kill()
+    out = proc.communicate()[0]
+    wanted = [ln for ln in out.splitlines()
+              if re.search(r"liberaqt|generic|cannot|failed|error|not found", ln, re.I)]
+    annotate("Qt plugin loader (filtered)", "\n".join(wanted[-120:]) or out[-6000:])
 
 
 def main(tag: str) -> int:
@@ -37,14 +86,22 @@ def main(tag: str) -> int:
     root = Path(os.environ["QT_ROOT_DIR"])
     exe = root / "bin" / ("assistant.exe" if sys.platform == "win32" else "assistant")
     if not exe.is_file():
-        print(f"{exe} does not exist; the kit has no Qt Assistant to drive")
+        listing = "\n".join(sorted(p.name for p in exe.parent.iterdir())) if exe.parent.is_dir() \
+            else f"{exe.parent} does not exist"
+        annotate(f"{tag}: no Qt Assistant in the kit", f"{exe} is missing. bin/ holds:\n{listing}")
         return 2
 
     # Offscreen on Linux, where the runner has no display; Windows runners have a desktop, and
     # the launcher refuses headless there.
     headless = sys.platform.startswith("linux")
     with liberaqt(default_timeout=30.0) as lq:
-        app = lq.launch(str(exe), timeout=180.0, headless=headless)
+        try:
+            app = lq.launch(str(exe), timeout=120.0, headless=headless)
+        except LiberaQtError as exc:
+            log = "\n".join((getattr(exc, "data", None) or {}).get("log", []))
+            annotate(f"{tag}: launch failed", f"{exc}\n{exc.hint or ''}\n--- log ---\n{log}")
+            diagnose(exe, headless)
+            return 1
         caps = app.capabilities
         key = caps.get("abi_key")
         commands = caps.get("commands", [])

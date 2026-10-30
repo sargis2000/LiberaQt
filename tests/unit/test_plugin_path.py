@@ -83,3 +83,44 @@ def test_an_unreadable_cache_does_not_break_launching(tmp_path, monkeypatch):
     )
     env = build_environment(build, "tok", tmp_path, base_env={})
     assert _paths(env) == [str(build.plugin_dir)]
+
+
+# ------------------------------------------------------------------ the agent's own Qt dependencies
+
+
+_LDD = (
+    "\tlinux-vdso.so.1 (0x00007ffc5a1e2000)\n"
+    "\tlibQt6Widgets.so.6 => /opt/Qt/6.7.2/gcc_64/lib/libQt6Widgets.so.6 (0x00007f0a1c000000)\n"
+    "\tlibQt6Core.so.6 => /opt/Qt/6.7.2/gcc_64/lib/libQt6Core.so.6 (0x00007f0a1b800000)\n"
+    "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f0a1b400000)\n"
+)
+
+
+def _fake_ldd(monkeypatch, output, platform="linux"):
+    import types
+    monkeypatch.setattr(agent_registry.sys, "platform", platform)
+    monkeypatch.setattr(agent_registry.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(stdout=output))
+
+
+def test_the_agent_finds_qt_where_the_application_does(monkeypatch):
+    """The agent links QtNetwork; Qt Assistant never loads it.
+
+    A dlopen'd plugin does not inherit the executable's RUNPATH, so with a Qt outside the system
+    path -- every online-installer or aqt kit -- the agent's QtNetwork dependency could not be
+    resolved and Qt dropped the plugin without a word: CI's first smoke test failed on all three
+    Linux legs this way while every Windows MSVC leg passed. The launcher now puts the directory
+    the application resolves QtCore from on LD_LIBRARY_PATH.
+    """
+    _fake_ldd(monkeypatch, _LDD)
+    assert agent_registry.qt_library_dir("/opt/app/bin/app") == Path("/opt/Qt/6.7.2/gcc_64/lib")
+
+
+def test_an_unresolved_qtcore_gives_no_directory(monkeypatch):
+    _fake_ldd(monkeypatch, "\tlibQt6Core.so.6 => not found\n")
+    assert agent_registry.qt_library_dir("/opt/app/bin/app") is None
+
+
+def test_the_library_path_is_a_linux_matter(monkeypatch):
+    _fake_ldd(monkeypatch, _LDD, platform="win32")
+    assert agent_registry.qt_library_dir("C:/app/app.exe") is None

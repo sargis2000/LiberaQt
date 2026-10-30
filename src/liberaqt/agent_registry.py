@@ -289,6 +289,36 @@ def detect_qt_version(executable: str) -> str | None:
     return None
 
 
+def qt_library_dir(executable: str) -> Path | None:
+    """The directory an executable loads its QtCore from on Linux, as the dynamic linker sees it.
+
+    The agent links QtNetwork (and QtQuick/QtQml where the kit has them). An application that
+    never loads one of those itself leaves the agent's dependency unresolvable: a ``dlopen``'d
+    plugin does not inherit the executable's ``RUNPATH``, so Qt drops the plugin in silence.
+    That is the normal case for a Qt from the online installer or aqt, which lives outside the
+    system library path. The launcher puts this directory on ``LD_LIBRARY_PATH`` to close it.
+
+    Args:
+        executable: Path to the application.
+
+    Returns:
+        The directory holding the ``libQt<N>Core.so`` the executable resolves, or None when not
+        on Linux, when ``ldd`` cannot say, or when QtCore comes from the system path anyway.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        out = subprocess.run(["ldd", str(executable)], capture_output=True, text=True,
+                             timeout=15).stdout
+    except Exception:  # noqa: BLE001 - best effort; without it the launch proceeds unchanged
+        return None
+    for line in out.splitlines():
+        m = re.search(r"libQt\dCore\.so\S*\s*=>\s*(\S+)", line)
+        if m and m.group(1).startswith("/"):
+            return Path(m.group(1)).parent
+    return None
+
+
 def _dll_minor_version(dll: Path) -> int | None:
     """Read a DLL's FileVersion minor number (Windows only). Placeholder for a PE parser."""
     try:
