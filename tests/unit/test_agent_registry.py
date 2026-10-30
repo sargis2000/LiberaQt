@@ -120,3 +120,62 @@ def test_arch_is_reported_for_a_32_bit_target(tmp_path):
                        stamp("i386-little_endian-ilp32 shared (dynamic) release build; "
                              "by MSVC 2019"))
     assert inspect_binary(str(target)).arch == "x86"
+
+
+# ------------------------------------------------------------------ Linux: the soname has no minor
+
+
+def _linux_app(tmp_path, monkeypatch, core_name, core_bytes=b"\x7fELF"):
+    """An application whose ldd output names QtCore the way every real Linux Qt does.
+
+    ldd prints the *soname* path, ``.../libQt6Core.so.6``, a symlink to the real file
+    (``libQt6Core.so.6.7.2``). Symlinks need privileges on Windows, so realpath is mapped.
+    """
+    import types
+
+    from liberaqt import agent_registry
+
+    lib = tmp_path / "Qt" / "lib"
+    lib.mkdir(parents=True)
+    real = lib / core_name
+    real.write_bytes(core_bytes)
+    soname = lib / "libQt6Core.so.6"
+    exe = tmp_path / "Qt" / "bin" / "assistant"
+    exe.parent.mkdir()
+    exe.write_bytes(b"\x7fELF")
+    ldd = (f"\tlibQt6Widgets.so.6 => {lib}/libQt6Widgets.so.6 (0x00007f0a1c000000)\n"
+           f"\tlibQt6Core.so.6 => {soname} (0x00007f0a1b800000)\n")
+    monkeypatch.setattr(agent_registry.sys, "platform", "linux")
+    monkeypatch.setattr(agent_registry.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(stdout=ldd))
+    real_realpath = agent_registry.os.path.realpath
+    monkeypatch.setattr(agent_registry.os.path, "realpath",
+                        lambda p: str(real) if str(p) == str(soname) else real_realpath(p))
+    return agent_registry, str(exe)
+
+
+def test_a_linux_soname_without_the_minor_still_yields_the_version(tmp_path, monkeypatch):
+    """The version comes from the file the soname resolves to, not the soname.
+
+    ldd prints ``libQt6Core.so.6`` -- major only -- so every Linux application read as
+    "Qt unknown" and was refused, Qt's own Assistant included (CI's first Linux smoke run).
+    The file it resolves to, ``libQt6Core.so.6.7.2``, carries the rest.
+    """
+    registry, exe = _linux_app(tmp_path, monkeypatch, "libQt6Core.so.6.7.2")
+    assert registry.detect_qt_version(exe) == "6.7"
+
+
+_STAMP = (b"\x00Qt 6.5.3 (x86_64-little_endian-lp64 shared (dynamic) release build; "
+          b"by GCC 10.3.1 20210422 (Red Hat 10.3.1-1))\x00")
+
+
+def test_with_no_version_in_any_file_name_the_build_stamp_decides(tmp_path, monkeypatch):
+    registry, exe = _linux_app(tmp_path, monkeypatch, "libQt6Core.so.6", _STAMP)
+    assert registry.detect_qt_version(exe) == "6.5"
+
+
+def test_a_linux_application_reports_its_compiler_from_qtcore(tmp_path, monkeypatch):
+    """Without it resolve() had no compiler to match on Linux at all."""
+    registry, exe = _linux_app(tmp_path, monkeypatch, "libQt6Core.so.6", _STAMP)
+    report = registry.inspect_binary(exe)
+    assert (report.qt_version, report.linkage, report.toolchain) == ("6.5", "dynamic", "gcc")

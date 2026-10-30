@@ -268,6 +268,18 @@ def detect_qt_version(executable: str) -> str | None:
                 m = _QT_LIB_RE.search(line)
                 if m:
                     return f"{m.group(3)}.{m.group(4)}"
+                # The usual case: ldd lists the soname, which carries the *major* version only
+                # ("libQt6Core.so.6 => /opt/Qt/6.7.2/gcc_64/lib/libQt6Core.so.6"), so the pattern
+                # above never matched and every Linux application read as "Qt unknown". The
+                # file the soname resolves to says the rest, and its build stamp always does.
+                core = _linux_qtcore(line)
+                if core is not None:
+                    v = re.search(r"libQt\dCore\.so\.(\d+)\.(\d+)", core.name)
+                    if v:
+                        return f"{v.group(1)}.{v.group(2)}"
+                    stamp = _qt_build_stamp(core.read_bytes())
+                    if stamp:
+                        return stamp[0]
             # Fall back to reading the SONAME strings directly out of the binary.
             data = exe.read_bytes()
             m = _QT_LIB_RE.search(data.decode("latin-1", "ignore"))
@@ -285,6 +297,44 @@ def detect_qt_version(executable: str) -> str | None:
                         return f"{major}.{minor}"
                 return f"{major}.?"
     except Exception:  # noqa: BLE001 - detection is best effort by design
+        return None
+    return None
+
+
+def _linux_qtcore(ldd_line: str) -> Path | None:
+    """The real file behind a QtCore line of ``ldd`` output, symlinks resolved, or None.
+
+    Args:
+        ldd_line: One line of ``ldd`` output.
+
+    Returns:
+        The resolved library path when the line names a resolved ``libQt<N>Core.so``.
+    """
+    m = re.search(r"libQt\dCore\.so\S*\s*=>\s*(\S+)", ldd_line)
+    if not m:  # "=> not found" falls through below: "not" is not a file
+        return None
+    real = Path(os.path.realpath(m.group(1)))
+    return real if real.is_file() else None
+
+
+def _linux_toolchain(executable: str) -> str | None:
+    """The compiler that built an application's QtCore on Linux, from QtCore's build stamp.
+
+    Args:
+        executable: Path to the application.
+
+    Returns:
+        A toolchain name such as ``"gcc"``, or None when the stamp cannot be read.
+    """
+    try:
+        out = subprocess.run(["ldd", str(executable)], capture_output=True, text=True,
+                             timeout=15).stdout
+        for line in out.splitlines():
+            core = _linux_qtcore(line)
+            if core is not None:
+                stamp = _qt_build_stamp(core.read_bytes())
+                return stamp[2] if stamp else None
+    except Exception:  # noqa: BLE001 - best effort; no toolchain means no compiler preference
         return None
     return None
 
@@ -535,6 +585,8 @@ def inspect_binary(executable: str) -> BinaryReport:
     linked_qt = detect_qt_version(str(path))
     if linked_qt:
         report.qt_version = linked_qt
+        if report.toolchain is None and sys.platform.startswith("linux"):
+            report.toolchain = _linux_toolchain(str(path))
         report.linkage = "dynamic"
         report.injectable = True
         return report

@@ -119,12 +119,19 @@ def main(tag: str) -> int:
         problems.append("no window reported")
     if widgets < 5:
         problems.append(f"selector engine found only {widgets} widgets")
-    for p in problems:
-        print(f"FAIL: {p}")
-    if not problems:
+    if problems:
+        annotate(f"{tag}: checks failed", "\n".join(problems) +
+                 f"\nabi_key={key} commands={len(commands)} windows={len(windows)} "
+                 f"widgets={widgets}")
+    else:
         print(f"{tag}: agent loads and answers")
     return 1 if problems else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    try:
+        sys.exit(main(sys.argv[1]))
+    except Exception:  # noqa: BLE001 - whatever broke, say so where it can be read
+        import traceback
+        annotate(f"{sys.argv[1]}: smoke test crashed", traceback.format_exc())
+        sys.exit(1)
