@@ -96,7 +96,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"  - {b}  ->  {b.library}{note}")
     else:
         print("agents installed: NONE")
-        print("  fix: liberaqt agents install --qt 6.7")
+        print("  fix: liberaqt agents install --tag <tag>  "
+              "(liberaqt doctor <exe> names the tag your application needs)")
 
     if stale:
         print(_wrap(
@@ -283,9 +284,20 @@ def cmd_agents(args: argparse.Namespace) -> int:
         return _agents_update(args)
 
     if args.agents_command == "install":
-        tag = args.tag or (
-            f"qt{args.qt}-{agent_registry.current_platform_tag()}-{args.compiler}"
-        )
+        tag = args.tag
+        if not tag:
+            here = agent_registry.current_platform_tag()
+            # No Windows agent is built with gcc, so defaulting to it could only fail -- after a
+            # download attempt, with a message about the URL rather than the missing choice.
+            compiler = args.compiler or (None if here.startswith("windows-") else "gcc")
+            if compiler is None:
+                print(_wrap(
+                    "say which compiler built the application's Qt: --compiler msvc2019 or "
+                    "--compiler mingw. Better, give the whole tag that `liberaqt doctor <exe>` "
+                    "names: --qt and --compiler use this machine's architecture, so a 32-bit "
+                    "application needs --tag anyway."))
+                return 2
+            tag = f"qt{args.qt}-{here}-{compiler}"
         try:
             prefix = agent_install.install(tag, source=args.source, base_url=args.base_url)
         except LiberaQtError as exc:
@@ -881,8 +893,12 @@ def build_parser() -> argparse.ArgumentParser:
     asub = p.add_subparsers(dest="agents_command", required=True)
     asub.add_parser("list")
     pi = asub.add_parser("install")
-    pi.add_argument("--qt", default="6.7", choices=list(agent_registry.SUPPORTED_QT))
-    pi.add_argument("--compiler", default="gcc")
+    pi.add_argument("--qt", default="6.7", choices=list(agent_registry.SUPPORTED_QT),
+                    help="Qt minor version; with --compiler, builds a tag for this machine's "
+                         "architecture")
+    pi.add_argument("--compiler",
+                    help="toolchain in the tag: msvc2019 or mingw on Windows (required there), "
+                         "gcc elsewhere (the default)")
     pi.add_argument("--tag", help="full build tag, instead of --qt/--compiler")
     pi.add_argument("--from", dest="source", metavar="URL|PATH",
                     help="archive to install from, instead of looking under the base URL")

@@ -161,3 +161,62 @@ def test_only_the_wrong_compiler_is_a_refusal_that_says_so(resolve_compilers):
 def test_an_unreadable_binary_keeps_the_old_behaviour(resolve_compilers):
     """No toolchain in the stamp means no compiler preference, not a refusal."""
     assert resolve_compilers(None, ["mingw"]).compiler == "mingw"
+
+
+# ------------------------------------------------------------------ the advice names the agent
+
+
+def _refusal(resolve_compilers, toolchain, qt="5.15", arch="x86"):
+    with pytest.raises(AgentMismatchError) as excinfo:
+        resolve_compilers(toolchain, [], qt=qt, arch=arch)
+    return str(excinfo.value)
+
+
+def test_the_refusal_names_the_exact_tag_to_install(resolve_compilers):
+    """Libero is 32-bit MSVC Qt 5.15; the advice was ``agents install --qt 5.15``.
+
+    That command builds its tag from the *host's* platform and a ``gcc`` default compiler, so on
+    a 64-bit Windows machine it asked for ``qt5.15-windows-x86_64-gcc`` -- wrong architecture and
+    wrong compiler, for a tag nothing ever publishes.
+    """
+    text = _refusal(resolve_compilers, "msvc")
+    assert "liberaqt agents install --tag qt5.15-windows-x86-msvc2019" in text
+    assert "--qt" not in text
+
+
+def test_the_refusal_names_the_tag_for_a_mingw_application(resolve_compilers):
+    text = _refusal(resolve_compilers, "mingw", qt="6.7", arch="x86_64")
+    assert "liberaqt agents install --tag qt6.7-windows-x86_64-mingw" in text
+    assert "liberaqt agents build --tag qt6.7-windows-x86_64-mingw" in text
+
+
+def test_the_build_advice_never_installs_under_a_tag_the_registry_misreads(resolve_compilers):
+    """The cmake recipe installed under ``...-local``, a tag the registry misreads.
+
+    The registry reads the compiler from the tag and ``local`` falls back to GNU, so an MSVC build
+    was asked for ``liberaqt_5_15_32_gnu`` while it advertised ``..._msvc`` -- and ``doctor`` then
+    called the fresh build STALE.
+    """
+    assert "-local" not in _refusal(resolve_compilers, "msvc")
+
+
+def test_an_unknown_compiler_offers_both_windows_choices_rather_than_guessing(resolve_compilers):
+    text = _refusal(resolve_compilers, None, qt="6.7", arch="x86_64")
+    assert "qt6.7-windows-x86_64-msvc2019" in text
+    assert "qt6.7-windows-x86_64-mingw" in text
+
+
+def test_install_from_parts_refuses_to_guess_a_windows_compiler(monkeypatch, capsys):
+    """On Windows, ``agents install --qt`` must ask for the compiler instead of assuming gcc.
+
+    ``--compiler`` defaulted to ``gcc``, which no Windows agent is ever built with, so the command
+    could only fail -- after a download attempt, with a message about the URL rather than the
+    missing choice.
+    """
+    from liberaqt import agent_install, cli
+
+    monkeypatch.setattr(agent_registry, "current_platform_tag", lambda: "windows-x86_64")
+    monkeypatch.setattr(agent_install, "install", lambda *a, **k: pytest.fail("should not fetch"))
+    assert cli.main(["agents", "install", "--qt", "6.7"]) == 2
+    out = capsys.readouterr().out
+    assert "--compiler" in out and "msvc2019" in out and "mingw" in out

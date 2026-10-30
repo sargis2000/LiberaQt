@@ -40,15 +40,15 @@ Qt writes into whichever binary carries QtCore.
 
 ```bash
 liberaqt agents list
-liberaqt agents install --qt 5.15 --compiler msvc2019
+liberaqt agents install --tag qt5.15-windows-x86-msvc2019      # the tag `doctor <exe>` names
 liberaqt agents install --tag qt5.15-windows-x86-msvc2019 --from ./agent.zip
 liberaqt agents remove qt6.7-windows-x86_64-mingw
 ```
 
 | Option | Meaning |
 |--------|---------|
-| `--qt`, `--compiler` | build the tag from parts, using the current platform |
-| `--tag` | give the full tag instead |
+| `--tag` | the full tag, as `liberaqt doctor <exe>` names it -- the reliable way |
+| `--qt`, `--compiler` | build the tag from parts, for *this machine's* architecture (so not for a 32-bit application on 64-bit Windows); `--compiler` is required on Windows |
 | `--from URL\|PATH` | install this archive, ignoring the base URL |
 | `--base-url URL` | where `<tag>.zip` lives; defaults to `$LIBERAQT_AGENT_BASE_URL`, else the public releases page |
 

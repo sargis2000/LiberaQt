@@ -625,6 +625,34 @@ def is_cached(build: AgentBuild) -> bool:
         return False
 
 
+def suggested_tags(qt: str | None, platform_tag: str, toolchain: str | None) -> list[str]:
+    """The install tag, or tags, that would serve an application -- for advice to print.
+
+    Advice used to say ``agents install --qt <ver>``, which builds its tag from the *host's*
+    platform and a ``gcc`` default: for 32-bit MSVC Libero on 64-bit Windows that asked for
+    ``qt5.15-windows-x86_64-gcc``, wrong in architecture and compiler both. Naming the whole tag
+    from what the binary itself reports leaves nothing to default.
+
+    Args:
+        qt: The application's Qt minor version, or None when the binary does not say.
+        platform_tag: The application's platform and architecture, e.g. ``"windows-x86"``.
+        toolchain: The compiler its Qt was built with, or None when the binary does not say.
+
+    Returns:
+        One tag when the compiler is known; on Windows with no compiler, one per family, since a
+        guess between MSVC and MinGW is wrong half the time and fails in silence.
+    """
+    minor = qt or "<minor>"
+    if toolchain:
+        # MSVC 2015-2022 are one binary-compatible family, which CI publishes as msvc2019.
+        compilers = ["msvc2019" if compiler_family(toolchain) == "msvc" else toolchain]
+    elif platform_tag.startswith("windows-"):
+        compilers = ["msvc2019", "mingw"]
+    else:
+        compilers = ["gcc"]
+    return [f"qt{minor}-{platform_tag}-{c}" for c in compilers]
+
+
 def _binary_toolchain(executable: str) -> str | None:
     """The compiler the application's Qt was built with, or None when the binary does not say.
 
@@ -695,6 +723,15 @@ def resolve(executable: str, qt: str | None = None) -> AgentBuild:
         too_new = []
     other_compiler = [str(c) for c in wrong_compiler
                       if c.platform_tag == tag and (not wanted_qt or c.qt == wanted_qt)]
+    tags = suggested_tags(wanted_qt, tag, toolchain)
+    if len(tags) == 1:
+        get = (f"liberaqt agents install --tag {tags[0]}\n"
+               "  or build it from a matching local Qt kit:  "
+               f"liberaqt agents build --tag {tags[0]}")
+    else:
+        get = ("The binary does not say which compiler built its Qt, so pick the one that did:\n"
+               + "".join(f"  liberaqt agents install --tag {t}\n" for t in tags)
+               + "  or build one from a matching local Qt kit:  liberaqt agents build --tag <tag>")
     raise AgentMismatchError(
         f"no liberaqt agent for Qt {wanted_qt or 'unknown'} on {tag}"
         f"{f' built with {toolchain}' if toolchain else ''} (installed: {have})",
@@ -705,10 +742,7 @@ def resolve(executable: str, qt: str | None = None) -> AgentBuild:
             + (f"{', '.join(too_new)} is built against a newer Qt than this application, and Qt "
                f"refuses such a plugin without a word. Build one for {wanted_qt} instead.\n"
                if too_new else "")
-            + f"liberaqt agents install --qt {wanted_qt or '6.7'}\n"
-            "  or build one:  cmake -S agent -B build/agent -DCMAKE_PREFIX_PATH=$QTDIR "
-            "&& cmake --build build/agent && cmake --install build/agent --prefix "
-            f"{cache_dir() / 'agents' / f'qt{wanted_qt or 6.7}-{tag}-local'}"
+            + get
         ),
         data={"detected_qt": wanted_qt, "platform": tag,
               "installed": [str(c) for c in candidates]},

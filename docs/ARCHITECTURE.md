@@ -188,8 +188,8 @@ with a `# TODO: brittle selector` comment.
 ## 7. Packaging and distribution
 
 * `pip install liberaqt` -> pure-Python client + CLI, no agent binaries.
-* `liberaqt agents install --qt 6.7` -> downloads the matching prebuilt agent from GitHub Releases
-  into a user cache dir.
+* `liberaqt agents install --tag <tag>` -> downloads the matching prebuilt agent from GitHub
+  Releases into a user cache dir; `liberaqt doctor <exe>` names the tag an application needs.
 * Optional platform wheels (`liberaqt-agent-qt67-manylinux`, `-win64`) for air-gapped CI.
 * Building the agent from source is one CMake invocation against any Qt install; documented for
   users whose Qt build has a custom ABI.

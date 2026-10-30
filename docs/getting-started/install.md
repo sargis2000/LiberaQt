@@ -124,17 +124,25 @@ liberaqt doctor "C:\Program Files\YourApp\yourapp.exe"
 target   C:\Program Files\YourApp\yourapp.exe
   detected Qt: 5.15.1, msvc2019, x86 (dynamic linkage)
   NO MATCHING AGENT
-  no liberaqt agent for Qt 5.15 on windows-x86 (installed: qt6.7-windows-x86_64-mingw)
+  no liberaqt agent for Qt 5.15 on windows-x86 built with msvc (installed: qt6.7-windows-x86_64-mingw)
+  hint: liberaqt agents install --tag qt5.15-windows-x86-msvc2019
 ```
 
 None of that is guessed: linkage, version and compiler are read from the `QLibraryInfo::build()`
-stamp that Qt writes into whichever binary carries QtCore.
+stamp that Qt writes into whichever binary carries QtCore, and the hint names the exact tag.
 
 ### Installing a prebuilt agent
 
+Install the tag `doctor` named:
+
 ```bash
-liberaqt agents install --qt 5.15 --compiler msvc2019
+liberaqt agents install --tag qt5.15-windows-x86-msvc2019
 ```
+
+`--qt` with `--compiler` builds a tag from parts instead, but for *this machine's* architecture:
+on 64-bit Windows `--qt 5.15 --compiler msvc2019` asks for the x86_64 agent, which a 32-bit
+application cannot load. On Windows `--compiler` is required, since no Windows agent is built
+with gcc.
 
 !!! note "There is no public download location yet"
     Point `LIBERAQT_AGENT_BASE_URL` at any location holding `<tag>.zip` — a releases page, an
