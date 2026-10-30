@@ -354,10 +354,13 @@ def _await_port(popen: subprocess.Popen, port_dir: Path, timeout: float,
         f"the liberaqt agent did not report a port within {timeout:.0f}s",
         hint=(
             "Most likely causes, in order:\n"
-            "    1. Agent/Qt ABI mismatch  -> liberaqt doctor\n"
-            "    2. A bundled qt.conf overrides QT_PLUGIN_PATH -> use LD_PRELOAD mode\n"
-            "    3. The app never constructs a QGuiApplication -> use the in-app embed API\n"
-            "  Re-run with QT_DEBUG_PLUGINS=1 for Qt's full plugin loader trace."
+            "    1. Agent/Qt ABI mismatch, or a STALE agent  -> liberaqt doctor <exe>\n"
+            "    2. Statically linked Qt                     -> liberaqt doctor says so; "
+            "not drivable\n"
+            "    3. A bundled qt.conf overrides QT_PLUGIN_PATH\n"
+            "    4. The app never constructs a QGuiApplication (QCoreApplication only)\n"
+            "  Re-run with env={'QT_DEBUG_PLUGINS': '1'}: Qt then explains every plugin it\n"
+            "  refuses, and the last 40 lines of output are in this error's data['log']."
         ),
         data={"log": log_lines[-40:]},
     )

@@ -41,6 +41,27 @@ pseudo      := ':visible' | ':enabled' | ':checked' | ':focused'
 Parsing happens client-side, so a syntax error is a Python traceback rather than an opaque agent
 error.
 
+### Quoting, and backslashes in a regular expression
+
+A value may be quoted with `'` or `"`. Inside the quotes a backslash **escapes the next
+character and is removed**, so `[text='It\'s']` matches `It's`. The catch is regular
+expressions: `[text~='^\w+$']` reaches the agent as `^w+$` and silently matches nothing. Double
+every backslash that belongs to the expression, or write the class out:
+
+```python
+win.locator(r"QLabel[text~='^\\w+$']")           # the agent receives ^\w+$
+win.locator("QLabel[text~='^[A-Za-z0-9_]+$']")    # no backslash needed
+```
+
+### What `[key=...]` reads
+
+`text` is the object's display text: the first non-empty of `text`, `title`, `windowTitle`,
+`plainText`, `currentText`, `displayText` and `placeholderText`, with `&` mnemonics removed and
+whitespace collapsed. `objectName` is the object name. **Every other key is read as a Qt
+property** with `QObject::property()`, so `[toolTip*='Save']`, `[accessibleName='Volume']` and
+`[checkable=true]` all work, and a key that is not a property -- a typo, or a name such as `role`
+-- matches nothing rather than raising. `loc.properties()` lists the real names.
+
 ## Four rules that trip people up
 
 ### Type matching walks the inheritance chain
@@ -147,11 +168,19 @@ because the ambiguity is now intended.
 ```python
 win.locator("QListView").filter(has_text="Inbox")
 win.locator("QWidget").filter(has="QPushButton[text='OK']")
-win.locator("QWidget").filter(has_not="QLabel")
 ```
 
 The conditions are folded into the selector and evaluated by the agent, so filtering costs nothing
-beyond the search that was already going to happen.
+beyond the search that was already going to happen. `has_text` means *contains*.
+
+!!! failure "`filter(has_not=...)` does nothing in 0.1.x"
+    It is accepted and put on the wire, but the agent skips it, so the locator matches exactly
+    what it would without the condition. Filter in Python until it is implemented -- a locator
+    taken from `.all()` searches only inside its own object:
+
+    ```python
+    panels = [p for p in win.locator("QFrame").all() if p.locator("QLabel").count == 0]
+    ```
 
 ## Finding selectors for a real application
 

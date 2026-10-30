@@ -518,8 +518,9 @@ def inspect_binary(executable: str) -> BinaryReport:
             report.reason = (
                 "Qt is linked statically into this executable, so it has no plugin loader for "
                 "the agent to use, and an agent carrying its own Qt would put two copies of Qt "
-                "in one process. No injection mode can work; the application has to be built "
-                "with the agent embedded (LiberaQt::start(), docs/INJECTION.md section 4)."
+                "in one process. No injection mode can work. Linking the agent into the "
+                "application (docs/INJECTION.md section 4) would, but that entry point is "
+                "declared and not yet implemented."
             )
         return report
 
