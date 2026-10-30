@@ -145,6 +145,21 @@ liberaqt docs build          build it into ./site
 liberaqt run tests/
 ```
 
+## Using it with Claude Code
+
+This repository is also a Claude Code plugin marketplace. The plugin teaches Claude how to write,
+run and debug LiberaQT tests for your application:
+
+```text
+/plugin marketplace add sargis2000/LiberaQt
+/plugin install liberaqt@liberaqt
+```
+
+It adds a `write-tests` skill and a `troubleshoot` skill, an `explorer` agent that returns
+verified selectors from your running application, and a `test-author` agent that turns a
+scenario into tests and proves each one can fail. See
+[`plugins/liberaqt/README.md`](plugins/liberaqt/README.md).
+
 ## Security
 
 The agent is a remote-code-execution surface by design. It binds `127.0.0.1` only, requires a

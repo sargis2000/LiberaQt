@@ -1,0 +1,16 @@
+{
+  "name": "liberaqt",
+  "owner": {
+    "name": "Sargis Khachatryan"
+  },
+  "metadata": {
+    "description": "Claude Code support for LiberaQT, UI automation for Qt desktop applications."
+  },
+  "plugins": [
+    {
+      "name": "liberaqt",
+      "source": "./plugins/liberaqt",
+      "description": "Write, run and debug LiberaQT UI tests for Qt Widgets and QML applications."
+    }
+  ]
+}

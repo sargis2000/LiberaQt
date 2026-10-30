@@ -14,6 +14,8 @@
       "Bash(liberaqt agents kits:*)",
       "Bash(liberaqt inspect:*)",
       "Bash(liberaqt docs:*)",
+      "Bash(claude plugin validate:*)",
+      "Bash(claude plugin details:*)",
       "Bash(cmake:*)",
       "Bash(ninja:*)",
       "Bash(git status:*)",
