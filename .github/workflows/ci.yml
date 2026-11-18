@@ -9,7 +9,9 @@ on:
 jobs:
   client:
     name: Python client (no Qt needed)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: when latest moved to Ubuntu 26.04, setup-python had no 3.9 for
+    # it, the 3.9 leg could not start, and the release that needs every job never published.
+    runs-on: ubuntu-22.04
     strategy:
       # One Python's failure used to cancel the others, so a 3.9-only break hid whether 3.11 and
       # 3.12 passed at all. Each version reports for itself.
